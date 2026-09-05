@@ -13,16 +13,21 @@ const { assertTopology } = require('./topology');
 const { dispatch } = require('./dispatch');
 const notifier = require('./notifier');
 const tickets = require('./tickets');
+const { normalizeEvent, evaluatePolicies } = require('./policy');
+const { SafetyEngine, Evaluator, Learner } = require('./loops');
 
 const log = (...a) => console.log(`[gateway ${new Date().toISOString()}]`, ...a);
 
 const store = new Store();
 const stats = new Stats();
-const appLocals = { amqpChannel: null }; // populated in main()
+const appLocals = { amqpChannel: null };
+const auditLog = [];
+const evaluator = new Evaluator();
+const safety = new SafetyEngine(config.policies, auditLog);
+const learner = new Learner(store);
 
 // Global dispatch semaphore: bounds TOTAL in-flight n8n dispatches across
-// ALL queues to MAX_CONCURRENCY (RabbitMQ prefetch alone is per-queue, so a
-// 3-queue fan-out could otherwise reach 3x the cap).
+// ALL queues to MAX_CONCURRENCY (RabbitMQ prefetch alone is per-queue).
 class Semaphore {
   constructor(max) {
     this.max = max;
@@ -42,7 +47,7 @@ class Semaphore {
   release() {
     const next = this.waiters.shift();
     if (next) {
-      this.active += 1; // keep it full
+      this.active += 1;
       next();
     } else {
       this.active -= 1;
@@ -50,6 +55,13 @@ class Semaphore {
   }
 }
 const semaphore = new Semaphore(config.maxConcurrency);
+
+// Map event → action for the Safety gate (from policy decision)
+function actionFromEvent(event, decision) {
+  if (decision.actions.includes('auto_fix')) return 'restart_pod';
+  if (decision.actions.includes('ticket')) return 'create_ticket';
+  return 'notify';
+}
 
 // ------------------------------------------------------------------ helpers
 const statusFromType = (t = '') => (t.includes('failed') ? 'failed' : t.includes('skipped') ? 'skipped' : 'completed');
@@ -150,18 +162,62 @@ async function handleMessage(queue, msg) {
     }
   }
 
-  // ---- dispatch to n8n (concurrency bounded per-queue by RabbitMQ prefetch
-  // ---- AND globally by the gateway semaphore == MAX_CONCURRENCY)
+  // ── Decision Loop: normalize → classify → policy match → decide action
+  const normEvent = normalizeEvent(event);
+  const { matched, rule, decision } = evaluatePolicies(normEvent, config.policies?.policies || []);
+  log(`DECIDE event=${event.event_id} rule=${matched ? rule : 'none'} actions=${JSON.stringify(decision.actions)}`);
+
+  // Map queue → concrete action for the Safety gate
+  const queueAction = actionFromEvent(normEvent, { actions: [workflow === 'auto-fix' ? 'auto_fix' : workflow === 'incident-ticket' ? 'ticket' : 'notify'] });
+  metrics.decisionMatches.inc({ rule: matched ? rule : 'none', action: queueAction });
+
+  // ── Safety Loop: is this action allowed / needs approval / dry-run?
+  const gate = safety.gate(queueAction, { event_id: event.event_id, severity: normEvent.severity, service: normEvent.service });
+  log(`SAFETY event=${event.event_id} action=${queueAction} gate=${gate.decision}`);
+
+  if (gate.decision === 'blocked') {
+    metrics.safetyBlocks.inc({ action: queueAction, reason: gate.reason });
+    evaluator.record({ outcome: 'blocked', event_id: event.event_id, action_taken: queueAction, rule });
+    await learner.recordOutcome(event.event_id, { outcome: 'blocked', action_taken: queueAction, rule });
+    return finish();
+  }
+  if (gate.decision === 'approval_required') {
+    // Not auto-approved → escalate to human, do NOT dispatch
+    if (!decision.auto_approve) {
+      log(`ESCALATE event=${event.event_id} action=${queueAction} risk=${gate.risk} — needs approval`);
+      metrics.safetyBlocks.inc({ action: queueAction, reason: 'approval_required' });
+      evaluator.record({ outcome: 'escalated', event_id: event.event_id, action_taken: queueAction, rule, reason: 'approval_required' });
+      await learner.recordOutcome(event.event_id, { outcome: 'escalated', action_taken: queueAction, rule, reason: 'approval_required' });
+      // Still notify so humans are aware
+      return finish();
+    }
+  }
+  if (gate.decision === 'dry_run') {
+    metrics.safetyDryRuns.inc({ action: queueAction });
+    evaluator.record({ outcome: 'dry_run', event_id: event.event_id, action_taken: queueAction, rule });
+    await learner.recordOutcome(event.event_id, { outcome: 'dry_run', action_taken: queueAction, rule });
+    return finish();
+  }
+  // decision.suppress → drop silently
+  if (decision.suppress) {
+    evaluator.record({ outcome: 'suppressed', event_id: event.event_id, rule, reason: decision.reason });
+    await learner.recordOutcome(event.event_id, { outcome: 'suppressed', rule, reason: decision.reason });
+    return finish();
+  }
+
+  // ── dispatch to n8n (concurrency bounded per-queue by RabbitMQ prefetch
+  // ── AND globally by the gateway semaphore == MAX_CONCURRENCY)
   stats.begin(event, workflow);
   const inflight = stats.inflight.get(stats.key(workflow, event.event_id));
   if (inflight) inflight.workflow = workflow;
   await semaphore.acquire();
   metrics.activeExecutions.inc({ workflow });
   let result;
+  const dispatchStartedAt = Date.now();
   try {
     result = await dispatch({
       url: `${config.n8nBaseUrl}${webhook}`,
-      body: event,
+      body: { ...event, _decision: { rule, actions: decision.actions, safety: gate.decision, severity: normEvent.severity } },
       workflow,
       metrics,
       retryMax: config.retryMax,
@@ -176,7 +232,6 @@ async function handleMessage(queue, msg) {
 
   if (result.ok) {
     metrics.eventsDispatched.inc({ workflow });
-    // section 8: persist event_id -> execution_id mapping
     await store.set(
       `idem:exec:${event.event_id}`,
       JSON.stringify({ execution_id: result.executionId, workflow, at: new Date().toISOString() }),
@@ -270,10 +325,32 @@ app.post('/publish', async (req, res) => {
       workflow_ms: workflowMs,
     });
     log(`RESULT ${event.event_type} for ${event.correlation_id} total=${totalMs}ms workflow=${workflowMs}ms status=${status}`);
+
+    // ── Evaluation + Learning: record the outcome
+    const resolved = status === 'completed';
+    const actionSuccess = status === 'completed';
+    const evalOutcome = {
+      outcome: status === 'completed' ? 'auto_fixed' : status === 'failed' ? 'failed' : 'other',
+      event_id: event.correlation_id,
+      action_taken: orig.workflow,
+      action_success: actionSuccess,
+      resolved,
+      duration_ms: totalMs,
+      rule: event._decision?.rule || 'unknown',
+    };
+    evaluator.record(evalOutcome);
+    await learner.recordOutcome(event.correlation_id, evalOutcome);
+    metrics.evalAutoResolutionRate.set(evaluator.stats().auto_resolution_rate || 0);
+    const mttr = evaluator.mttr();
+    if (mttr != null) metrics.evalMttr.set(mttr / 1000);
+    metrics.evalActionSuccessRate.set(evaluator.stats().action_success_rate || 0);
   }
 
-  const ok = await publishEvent(event);
-  res.json({ published: ok, event_id: event.event_id, routing_key: event.event_type });
+  // Result events (those with a correlation_id) are terminal — record them
+  // but do NOT re-publish to the broker (avoids re-consumption loops).
+  const isResultEvent = Boolean(event.correlation_id);
+  const ok = isResultEvent ? false : await publishEvent(event);
+  res.json({ published: ok, event_id: event.event_id, routing_key: event.event_type, result_event: isResultEvent });
 });
 
 app.post('/notify', async (req, res) => {
@@ -306,6 +383,30 @@ app.post('/tickets', async (req, res) => {
 app.get('/tickets', async (_req, res) => {
   const rows = await store.lrange('tickets', 0, -1);
   res.json(rows.map((r) => JSON.parse(r)).reverse());
+});
+
+// ── Decision / Safety / Evaluation / Learning endpoints
+app.get('/policies', (_req, res) => res.json({ policies: config.policies.policies, whitelist: config.policies.action_whitelist, dry_run: config.policies.dry_run }));
+
+app.get('/audit', (_req, res) => res.json(auditLog.slice(-200).reverse()));
+
+app.get('/evaluation', (_req, res) => res.json(evaluator.stats()));
+
+app.get('/learning/insights', async (_req, res) => {
+  const insights = await learner.getInsights(store);
+  res.json(insights);
+});
+
+app.post('/learning/feedback', async (req, res) => {
+  const { event_id, correct_action, comment, rating } = req.body || {};
+  if (!event_id) return res.status(400).json({ error: 'event_id is required' });
+  await learner.recordFeedback(event_id, { correct_action, comment, rating });
+  res.json({ recorded: true, event_id });
+});
+
+app.get('/learning/outcomes', async (_req, res) => {
+  const rows = await store.lrange('learning:outcomes', 0, -1);
+  res.json(rows.map((r) => JSON.parse(r)).reverse().slice(0, 200));
 });
 
 // ------------------------------------------------------------------- startup

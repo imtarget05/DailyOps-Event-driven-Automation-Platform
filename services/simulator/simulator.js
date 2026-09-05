@@ -143,6 +143,42 @@ async function scenarioPoison(ch) {
   console.log(`dailyops_events_invalid_total = ${inv || 0}`);
 }
 
+async function scenarioSafety(ch) {
+  console.log('\n=== scenario: safety loop (blocked + approval-required actions) ===');
+  // This event should match pod-crashloop-auto-restart policy (restart_pod allowed + auto_approve)
+  publish(ch, serviceAlert({ pod: 'api-7d9f', dedup_key: `safety:allowed:${Date.now()}` }));
+  await sleep(3000);
+  const m = await fetchMetricsText(`${GATEWAY}/metrics`);
+  const blocks = Number(m.match(/dailyops_safety_blocks_total(?:\{[^}]*\})? (\d+)/)?.[1] || 0);
+  const approved = Number(m.match(/dailyops_events_dispatched_total(?:\{workflow="auto-fix"\})? (\d+)/)?.[1] || 0);
+  console.log(`\nsafety blocks=${blocks}, auto-fix dispatched=${approved} (expect approved > 0 for allowed restart_pod)`);
+}
+
+async function scenarioEvaluation(ch) {
+  console.log('\n=== scenario: evaluation loop (auto-resolution rate + MTTR) ===');
+  // Generate some events first
+  for (let i = 0; i < 5; i++) {
+    publish(ch, serviceAlert({ pod: 'api-7d9f', dedup_key: `eval:${Date.now()}:${i}` }));
+    await sleep(200);
+  }
+  await sleep(8000);
+  const evalRes = await fetchJson(`${GATEWAY}/evaluation`);
+  console.log('\nevaluation stats:', JSON.stringify(evalRes, null, 0));
+}
+
+async function scenarioLearning(ch) {
+  console.log('\n=== scenario: learning loop (feedback + insights) ===');
+  // Submit feedback for a past event
+  await fetch(`${GATEWAY}/learning/feedback`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ event_id: 'evt_learning_demo', correct_action: 'restart_pod', comment: 'correct, pod recovered', rating: 5 }),
+  }).then((r) => r.json()).then((d) => console.log('feedback recorded:', JSON.stringify(d)));
+  await sleep(500);
+  const insights = await fetchJson(`${GATEWAY}/learning/insights`);
+  console.log('\nlearning insights:', JSON.stringify(insights, null, 0));
+}
+
 const scenarios = {
   happy: scenarioHappy,
   dedup: scenarioDedup,
@@ -150,13 +186,16 @@ const scenarios = {
   latency: scenarioLatency,
   failure: scenarioFailure,
   poison: scenarioPoison,
+  safety: scenarioSafety,
+  evaluation: scenarioEvaluation,
+  learning: scenarioLearning,
 };
 
 async function main() {
   const name = process.argv[2] || 'happy';
   await withChannel(async (ch) => {
     if (name === 'all') {
-      for (const s of ['happy', 'dedup', 'latency', 'concurrency', 'failure', 'poison']) {
+      for (const s of ['happy', 'dedup', 'latency', 'concurrency', 'failure', 'poison', 'safety', 'evaluation', 'learning']) {
         await scenarios[s](ch);
         await sleep(2000);
       }

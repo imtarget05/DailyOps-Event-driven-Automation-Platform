@@ -57,6 +57,7 @@ services:
       RABBITMQ_MGMT_PASS: ${RABBITMQ_PASS:-dailyops}
       REDIS_URL: redis://redis:6379
       N8N_BASE_URL: http://n8n:5678
+      POLICY_FILE: /app/config/policies.json
       MAX_CONCURRENCY: ${MAX_CONCURRENCY:-8}
       SUPPRESSION_WINDOW_S: ${SUPPRESSION_WINDOW_S:-300}
       RETRY_MAX: ${RETRY_MAX:-3}
@@ -67,6 +68,8 @@ services:
       JIRA_PROJECT_KEY: ${JIRA_PROJECT_KEY:-DOPS}
     ports:
       - "9090:9090" # API + /metrics
+    volumes:
+      - ./config:/app/config:ro
     depends_on:
       rabbitmq:
         condition: service_healthy

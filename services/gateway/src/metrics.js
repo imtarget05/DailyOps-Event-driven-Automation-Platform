@@ -51,6 +51,28 @@ const metrics = {
     registers: [registry],
   }),
 
+  // -- evaluation loop (outcomes)
+  evalAutoResolutionRate: new client.Gauge({
+    name: 'dailyops_eval_auto_resolution_rate',
+    help: 'Fraction of events auto-resolved vs total',
+    registers: [registry],
+  }),
+  evalMttr: new client.Gauge({
+    name: 'dailyops_eval_mttr_seconds',
+    help: 'Mean time to resolve (seconds) for auto-resolved events',
+    registers: [registry],
+  }),
+  evalActionSuccessRate: new client.Gauge({
+    name: 'dailyops_eval_action_success_rate',
+    help: 'Fraction of actions that succeeded',
+    registers: [registry],
+  }),
+
+  // -- decision loop
+  decisionMatches: c('dailyops_decision_matches_total', 'Policy rule matches', ['rule', 'action']),
+  safetyBlocks: c('dailyops_safety_blocks_total', 'Actions blocked by safety gate', ['action', 'reason']),
+  safetyDryRuns: c('dailyops_safety_dry_runs_total', 'Actions taken in dry-run mode', ['action']),
+
   // -- business outcomes
   notificationsSent: c('dailyops_notifications_sent_total', 'Notifications delivered', ['channel']),
   notificationsSkipped: c('dailyops_notifications_skipped_total', 'Notifications skipped (channel not configured)'),

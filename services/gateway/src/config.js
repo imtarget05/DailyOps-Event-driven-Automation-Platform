@@ -50,4 +50,15 @@ module.exports = {
   exchange: 'dailyops.events',
   dlx: 'dailyops.dlx',
   dlq: 'q.dlq.dailyops',
+
+  // policy engine config (Decision Loop + Safety Loop)
+  policyFile: env('POLICY_FILE', './config/policies.json'),
+  get policies() {
+    try {
+      return JSON.parse(require('fs').readFileSync(this.policyFile, 'utf8'));
+    } catch (e) {
+      console.error('[config] failed to load policies:', e.message);
+      return { policies: [], action_whitelist: {}, dry_run: false };
+    }
+  },
 };
