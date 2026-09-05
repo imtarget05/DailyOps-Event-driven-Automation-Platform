@@ -67,7 +67,7 @@ jobs:
             -d '{"event_type":"service.alert","source":"prometheus","severity":"critical","service":"api","event_id":"ci-fanout-1","timestamp":"2026-09-05T00:00:00Z","payload":{"pod":"api-7d9f","namespace":"production","remediation":"restart_pod"}}'
           sleep 8
           METRICS=$(curl -s http://localhost:9090/metrics)
-          echo "$METRICS" | grep -q 'dailyops_events_received_total{source="prometheus",event_type="service.alert"}' && echo "RECEIVED_OK"
+          echo "$METRICS" | grep 'dailyops_events_received_total' | grep -q 'event_type="service.alert"' && echo "RECEIVED_OK"
           DISPATCHED=$(echo "$METRICS" | grep '^dailyops_events_dispatched_total' | awk '{s+=$2} END {print s+0}')
           echo "total dispatched=$DISPATCHED"
           test "$DISPATCHED" -ge 3
@@ -80,7 +80,7 @@ jobs:
           done
           sleep 5
           METRICS=$(curl -s http://localhost:9090/metrics)
-          DEDUP=$(echo "$METRICS" | grep '^dailyops_events_deduplicated_total ' | awk '{print $2+0}')
+          DEDUP=$(echo "$METRICS" | grep '^dailyops_events_deduplicated_total' | sed -E 's/.* ([0-9]+)$/\1/' | awk '{s+=$1} END {print s+0}')
           echo "deduplicated=$DEDUP (expect >= 47)"
           test "$DEDUP" -ge 47
 
@@ -92,7 +92,7 @@ jobs:
           done
           sleep 3
           METRICS=$(curl -s http://localhost:9090/metrics)
-          ID=$(echo "$METRICS" | grep '^dailyops_events_idempotent_skipped_total ' | awk '{print $2+0}')
+          ID=$(echo "$METRICS" | grep '^dailyops_events_idempotent_skipped_total' | sed -E 's/.* ([0-9]+)$/\1/' | awk '{s+=$1} END {print s+0}')
           echo "idempotent_skipped=$ID (expect >= 2)"
           test "$ID" -ge 2
 

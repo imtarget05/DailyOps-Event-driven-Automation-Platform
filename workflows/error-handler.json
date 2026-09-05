@@ -34,7 +34,7 @@
       "onError": "continueRegularOutput",
       "parameters": {
         "method": "POST",
-        "url": "http://gateway:8080/publish",
+        "url": "http://gateway:9090/publish",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ event_id: 'evt_' + $execution.id + '-err', event_type: 'system.workflow_failed', source: 'n8n.error-handler', timestamp: new Date().toISOString(), severity: 'critical', correlation_id: $json.correlation_id, payload: { failed_workflow: $json.failed_workflow, error: $json.error, original_event_id: $json.event_id } }) }}",

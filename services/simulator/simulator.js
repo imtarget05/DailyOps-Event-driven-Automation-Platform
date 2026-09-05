@@ -65,7 +65,7 @@ async function scenarioDedup(ch) {
   }
   await sleep(4000);
   const m = await fetchMetricsText(`${GATEWAY}/metrics`);
-  const deduped = Number(m.match(/dailyops_events_deduplicated_total (\d+)/)?.[1] || 0);
+  const deduped = Number(m.match(/dailyops_events_deduplicated_total(?:\{[^}]*\})? (\d+)/)?.[1] || 0);
   console.log(`\ndailyops_events_deduplicated_total = ${deduped} (expected: 49 of 50 dropped)`);
 }
 
@@ -137,8 +137,8 @@ async function scenarioPoison(ch) {
   console.log('published event missing event_id (rejected by validation -> dead-letter)');
   await sleep(3000);
   const m = await fetchMetricsText(`${GATEWAY}/metrics`);
-  const dl = m.match(/dailyops_deadletter_total\{[^}]*\} (\d+)/)?.map(Number)?.[1];
-  const inv = m.match(/dailyops_events_invalid_total (\d+)/)?.[1];
+  const dl = m.match(/dailyops_deadletter_total(?:\{[^}]*\})? (\d+)/)?.[1];
+  const inv = m.match(/dailyops_events_invalid_total(?:\{[^}]*\})? (\d+)/)?.[1];
   console.log(`\ndailyops_deadletter_total = ${dl || 0}`);
   console.log(`dailyops_events_invalid_total = ${inv || 0}`);
 }

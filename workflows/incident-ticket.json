@@ -68,7 +68,7 @@
       "waitBetweenTries": 2000,
       "parameters": {
         "method": "POST",
-        "url": "http://gateway:8080/tickets",
+        "url": "http://gateway:9090/tickets",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ title: `[${$json.service}] ${$json.event_type} — automated incident`, description: `Event ${$json.event_id} from ${$json.source} at ${$json.started_at}. Payload: ${JSON.stringify($json.payload)}`, severity: $json.severity, event: { event_id: $json.event_id, event_type: $json.event_type, source: $json.source } }) }}",
@@ -114,7 +114,7 @@
       "onError": "continueRegularOutput",
       "parameters": {
         "method": "POST",
-        "url": "http://gateway:8080/publish",
+        "url": "http://gateway:9090/publish",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.publish) }}",

@@ -20,6 +20,37 @@ const store = new Store();
 const stats = new Stats();
 const appLocals = { amqpChannel: null }; // populated in main()
 
+// Global dispatch semaphore: bounds TOTAL in-flight n8n dispatches across
+// ALL queues to MAX_CONCURRENCY (RabbitMQ prefetch alone is per-queue, so a
+// 3-queue fan-out could otherwise reach 3x the cap).
+class Semaphore {
+  constructor(max) {
+    this.max = max;
+    this.active = 0;
+    this.waiters = [];
+  }
+  acquire() {
+    return new Promise((resolve) => {
+      if (this.active < this.max) {
+        this.active += 1;
+        resolve();
+        return;
+      }
+      this.waiters.push(resolve);
+    });
+  }
+  release() {
+    const next = this.waiters.shift();
+    if (next) {
+      this.active += 1; // keep it full
+      next();
+    } else {
+      this.active -= 1;
+    }
+  }
+}
+const semaphore = new Semaphore(config.maxConcurrency);
+
 // ------------------------------------------------------------------ helpers
 const statusFromType = (t = '') => (t.includes('failed') ? 'failed' : t.includes('skipped') ? 'skipped' : 'completed');
 
@@ -119,10 +150,12 @@ async function handleMessage(queue, msg) {
     }
   }
 
-  // ---- dispatch to n8n (concurrency bounded by channel prefetch)
+  // ---- dispatch to n8n (concurrency bounded per-queue by RabbitMQ prefetch
+  // ---- AND globally by the gateway semaphore == MAX_CONCURRENCY)
   stats.begin(event, workflow);
   const inflight = stats.inflight.get(stats.key(workflow, event.event_id));
   if (inflight) inflight.workflow = workflow;
+  await semaphore.acquire();
   metrics.activeExecutions.inc({ workflow });
   let result;
   try {
@@ -138,6 +171,7 @@ async function handleMessage(queue, msg) {
     });
   } finally {
     metrics.activeExecutions.dec({ workflow });
+    semaphore.release();
   }
 
   if (result.ok) {

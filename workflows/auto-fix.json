@@ -133,11 +133,11 @@
     },
     {
       "id": "a9-waitsettle",
-      "name": "Wait 2s (Restart Settle)",
+      "name": "Wait 4s (Restart Settle)",
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
       "position": [1140, 100],
-      "parameters": { "resume": "timeInterval", "amount": 2, "unit": "seconds" }
+      "parameters": { "resume": "timeInterval", "amount": 4, "unit": "seconds" }
     },
     {
       "id": "a10-health",
@@ -203,7 +203,7 @@
       "onError": "continueRegularOutput",
       "parameters": {
         "method": "POST",
-        "url": "http://gateway:8080/publish",
+        "url": "http://gateway:9090/publish",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.publish) }}",
@@ -229,7 +229,7 @@
       "onError": "continueRegularOutput",
       "parameters": {
         "method": "POST",
-        "url": "http://gateway:8080/publish",
+        "url": "http://gateway:9090/publish",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.publish) }}",
@@ -261,18 +261,18 @@
     },
     "Restart Pod": {
       "main": [
-        [{ "node": "Wait 2s (Restart Settle)", "type": "main", "index": 0 }],
+        [{ "node": "Wait 4s (Restart Settle)", "type": "main", "index": 0 }],
         [{ "node": "Wait 3s Before Retry", "type": "main", "index": 0 }]
       ]
     },
     "Wait 3s Before Retry": { "main": [[{ "node": "Restart Pod (Retry)", "type": "main", "index": 0 }]] },
     "Restart Pod (Retry)": {
       "main": [
-        [{ "node": "Wait 2s (Restart Settle)", "type": "main", "index": 0 }],
+        [{ "node": "Wait 4s (Restart Settle)", "type": "main", "index": 0 }],
         [{ "node": "Build Result Failed", "type": "main", "index": 0 }]
       ]
     },
-    "Wait 2s (Restart Settle)": { "main": [[{ "node": "Health Check", "type": "main", "index": 0 }]] },
+    "Wait 4s (Restart Settle)": { "main": [[{ "node": "Health Check", "type": "main", "index": 0 }]] },
     "Health Check": {
       "main": [
         [{ "node": "Pod Healthy?", "type": "main", "index": 0 }],

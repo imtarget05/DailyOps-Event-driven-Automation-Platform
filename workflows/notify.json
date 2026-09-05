@@ -43,7 +43,7 @@
       "onError": "continueRegularOutput",
       "parameters": {
         "method": "POST",
-        "url": "http://gateway:8080/notify",
+        "url": "http://gateway:9090/notify",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ channel: $json.channel, text: $json.message, event_id: $json.event_id }) }}",
@@ -69,7 +69,7 @@
       "onError": "continueRegularOutput",
       "parameters": {
         "method": "POST",
-        "url": "http://gateway:8080/publish",
+        "url": "http://gateway:9090/publish",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.publish) }}",
