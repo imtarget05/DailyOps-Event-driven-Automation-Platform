@@ -1,11 +1,11 @@
 .COMPOSE := docker compose
 COMPOSE := docker compose
 
-.PHONY: up down ps logs restart urls simulate loadtest metrics
+.PHONY: up down ps logs restart urls decide-health
 
 up:            ## start the whole stack (first boot imports n8n workflows)
 	$(COMPOSE) up -d --build
-	@echo "n8n:  http://localhost:5678  |  Gateway: http://localhost:9090  |  Grafana: http://localhost:3000"
+	@echo "n8n:  http://localhost:5678  |  Agent: http://localhost:8000  |  Grafana: http://localhost:3001"
 
 down:          ## stop everything
 	$(COMPOSE) down
@@ -21,17 +21,15 @@ restart-n8n:
 
 urls:
 	@echo "n8n UI:        http://localhost:5678"
-	@echo "Gateway API:   http://localhost:9090  (/health /stats /metrics /tickets)"
-	@echo "RabbitMQ UI:   http://localhost:15672  (dailyops/dailyops)"
-	@echo "Grafana:       http://localhost:3000  (admin/admin)"
+	@echo "Agent API:     http://localhost:8000  (/health /agent/decide)"
+	@echo "Postgres:      localhost:5435  (dailyops/dailyops)"
+	@echo "Grafana:       http://localhost:3001  (admin/admin)"
 	@echo "Prometheus:    http://localhost:9091"
-	@echo "Mock K8s:      http://localhost:9100"
 
-simulate:      ## e.g. make simulate S=happy   (scenarios: happy dedup concurrency latency failure poison all)
-	$(COMPOSE) run --rm simulator node simulator.js $(S)
-
-loadtest:      ## e.g. make loadtest E=200 R=25
-	$(COMPOSE) run --rm simulator node loadtest.js --events $(or $(E),100) --rate $(or $(R),25)
-
-metrics:
-	@curl -s http://localhost:9090/metrics | grep '^dailyops'
+decide-health: ## smoke-test the agent-service contract
+	@curl -s http://localhost:8000/health
+	@echo
+	@curl -s -X POST http://localhost:8000/agent/decide \
+	  -H 'content-type: application/json' \
+	  -d '{"correlation_id":"run_smoke_001","event":{"type":"inventory_check","entity":"product_A","payload":{"stock":15,"avg_daily_sales":8}},"context":{"history_window_days":30,"requested_by":"daily-report-workflow"}}'
+	@echo
