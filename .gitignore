@@ -1,4 +1,7 @@
 node_modules/
-artifacts/
 .env
 *.log
+__pycache__/
+*.pyc
+.venv/
+agent-service/.venv/

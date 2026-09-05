@@ -1,0 +1,27 @@
+# DailyOps v2 business policies — auto vs approval.
+# LLM may only PROPOSE. This file (deterministic rules) decides execution rights.
+policies:
+  - name: report_auto
+    when: {action_type: REPORT}
+    mode: auto
+  - name: sheets_update_auto
+    when: {action_type: REPORT, target: sheets}
+    mode: auto
+  - name: notify_auto
+    when: {action_type: NOTIFY}
+    mode: auto
+  - name: ticket_auto
+    when: {action_type: TICKET}
+    mode: auto
+  - name: inventory_policy.restock_auto_threshold
+    when: {action_type: TICKET, ticket_type: inventory_risk, restock_qty_lte: 500}
+    mode: auto
+  - name: inventory_policy.restock_approval_threshold
+    when: {action_type: EXECUTE, ticket_type: inventory_risk, restock_qty_gt: 500}
+    mode: approval
+  - name: pricing_change_approval
+    when: {action_type: EXECUTE, target: pricing}
+    mode: approval
+  - name: refund_large_approval
+    when: {action_type: EXECUTE, target: refund}
+    mode: approval

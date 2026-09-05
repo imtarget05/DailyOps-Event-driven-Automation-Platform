@@ -1,0 +1,1641 @@
+{
+  "name": "DailyOps — Unified",
+  "id": "dailyopsUnifiedV2",
+  "active": true,
+  "nodes": [
+    {
+      "id": "st-contract",
+      "name": "Sticky — Contract",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1440,
+        1080
+      ],
+      "parameters": {
+        "content": "CONTRACT: n8n calls POST /agent/decide only. Reasoning + policy live in agent-service.",
+        "height": 220,
+        "width": 300,
+        "color": 4
+      }
+    },
+    {
+      "id": "st-approval",
+      "name": "Sticky — Approval loop",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1250,
+        1560
+      ],
+      "parameters": {
+        "content": "APPROVAL: PENDING → human link → APPROVED executes, else reject. Never auto-execute when needs_approval=true.",
+        "height": 150,
+        "width": 600,
+        "color": 4
+      }
+    },
+    {
+      "id": "t1-schedule",
+      "name": "Daily 08:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1700,
+        150
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cron",
+              "cronExpression": "0 8 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "t2-webhook",
+      "name": "Business Event",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1700,
+        400
+      ],
+      "webhookId": "dailyops-business-event",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "dailyops-event",
+        "responseMode": "onReceived",
+        "options": {}
+      }
+    },
+    {
+      "id": "t3-telegram",
+      "name": "Telegram Chat In",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1700,
+        650
+      ],
+      "notes": "Can tao Telegram credential (bot token tu BotFather) trong n8n UI. Luu y: Telegram chi goi duoc webhook qua public URL — chay tunnel (cloudflared/ngrok) va set WEBHOOK_URL tuong ung.",
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "options": {}
+      }
+    },
+    {
+      "id": "n-normalize",
+      "name": "Normalize Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1350,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// INGESTION + NORMALIZATION: schedule / webhook / telegram -> Event schema chung.\nconst raw = $input.first().json;\nconst body = raw.body || {};\nconst now = new Date();\nconst p = (n) => String(n).padStart(2, '0');\nconst stamp = `${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}_${p(now.getHours())}${p(now.getMinutes())}`;\nconst uid = Math.random().toString(36).slice(2, 8);\nlet event;\nif (raw.chat) {\n  event = { type: 'telegram_chat', entity: String((raw.chat && raw.chat.id) || 'unknown'), payload: { text: raw.text || '', chat_id: (raw.chat && raw.chat.id) || null, from: (raw.from && raw.from.username) || '', source: 'telegram' } };\n} else if (raw.body) {\n  event = { type: body.type || 'business_event', entity: body.entity || 'unknown', payload: body.payload || {} };\n} else {\n  event = { type: 'inventory_check', entity: 'product_A', payload: { stock: 15, avg_daily_sales: 8 } };\n}\n// TODO: thay payload demo bang node Fetch (Sheets/ERP/CRM) truoc Normalize.\nconst prefix = event.payload && event.payload.source === 'telegram' ? 'tg' : 'run';\nreturn [{ json: {\n  correlation_id: body.correlation_id || `${prefix}_${stamp}_${uid}`,\n  event,\n  context: { history_window_days: 30, requested_by: 'dailyops-unified' }\n}}];"
+      }
+    },
+    {
+      "id": "n-attach",
+      "name": "Attach Channel Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1350,
+        600
+      ],
+      "notes": "Plumbing thuan orchestration (khong reasoning): gop DecideResponse + Event goc de giu chat_id cho nhanh NOTIFY.",
+      "parameters": {
+        "jsCode": "// Gop DecideResponse + Event goc (giu chat_id/source) — khong reasoning, chi gop du lieu.\nconst norm = $('Normalize Event').first().json;\nconst d = $input.first().json;\nreturn [{ json: { ...d, event: norm.event } }];"
+      }
+    },
+    {
+      "id": "n-decide",
+      "name": "Supervisor — Decide (agent-service)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1000,
+        500
+      ],
+      "notes": "SUPERVISOR (agent-service, §4): classify -> delegate to specialists (asyncio.gather) -> aggregate -> policy gate. Returns canonical decision + specialists_used + evidence.",
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "parameters": {
+        "method": "POST",
+        "url": "http://agent-service:8000/agent/decide",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ correlation_id: $json.correlation_id, event: $json.event, context: $json.context }) }}",
+        "options": {
+          "timeout": 20000
+        }
+      }
+    },
+    {
+      "id": "n-recdecision",
+      "name": "Record Decision",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -1000,
+        750
+      ],
+      "notes": "Uses 'DailyOps Postgres' credential (auto-provisioned dev default; rotate in prod). Audit moi decision (contract 10 fields, §4 review). decision_id sinh SQL-side. raw_json bo qua chu y quote.",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ `INSERT INTO decisions (decision_id, correlation_id, event_type, entity, summary, confidence, action_type, needs_approval, policy_matched) VALUES ('dec_' || substr(md5(random()::text), 1, 8), '${$json.correlation_id}', '${$json.event.type}', '${String($json.event.entity || '').replace(/'/g, \"''\")}', '${String($json.decision.summary || '').replace(/'/g, \"''\")}', ${$json.decision.confidence}, '${$json.action_type}', ${$json.needs_approval}, '${$json.policy_matched}') RETURNING decision_id` }}",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "31c77e42-be7b-4f35-9cd7-615a75e6e7ac",
+          "name": "DailyOps Postgres"
+        }
+      }
+    },
+    {
+      "id": "n-route",
+      "name": "Route by action_type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        600,
+        500
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "cond-report-01",
+                    "leftValue": "={{ $json.action_type }}",
+                    "rightValue": "REPORT",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.string.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "REPORT"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "cond-notify-01",
+                    "leftValue": "={{ $json.action_type }}",
+                    "rightValue": "NOTIFY",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.string.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "NOTIFY"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "cond-ticket-01",
+                    "leftValue": "={{ $json.action_type }}",
+                    "rightValue": "TICKET",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.string.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "TICKET"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "cond-execute-01",
+                    "leftValue": "={{ $json.action_type }}",
+                    "rightValue": "EXECUTE",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.string.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "EXECUTE"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "UNKNOWN"
+        }
+      }
+    },
+    {
+      "id": "b-report",
+      "name": "Build Report Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        950,
+        100
+      ],
+      "parameters": {
+        "jsCode": "// REPORT branch: chuan bi dong bao cao cho Google Sheets.\nconst d = $input.first().json;\nreturn [{ json: { date: new Date().toISOString(), summary: d.decision.summary, confidence: d.decision.confidence, correlation_id: d.correlation_id } }];"
+      }
+    },
+    {
+      "id": "b-sheet",
+      "name": "Append Google Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        100
+      ],
+      "onError": "continueErrorOutput",
+      "notes": "Can tao Google Sheets OAuth2 credential + dien Sheet ID that (thay REPLACE_WITH_SHEET_ID), chon tab Sheet1.",
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Sheet1",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null,
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "b-haschat",
+      "name": "Has Telegram Chat?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        950,
+        400
+      ],
+      "notes": "Co chat_id (di tu Telegram) -> reply truc tiep; khong co -> chi gui Gmail (fallback notify).",
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-chat-01",
+              "leftValue": "={{ String($json.event.payload.chat_id || '') }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "b-replytg",
+      "name": "Reply Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1200,
+        300
+      ],
+      "onError": "continueRegularOutput",
+      "notes": "Can gan Telegram bot credential (cung bot voi Telegram Chat In).",
+      "parameters": {
+        "operation": "sendMessage",
+        "chatId": "={{ $json.event.payload.chat_id }}",
+        "text": "={{ $json.decision.summary }}",
+        "additionalFields": {}
+      }
+    },
+    {
+      "id": "b-gmail",
+      "name": "Send Gmail",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1200,
+        550
+      ],
+      "onError": "continueErrorOutput",
+      "notes": "Can tao Gmail OAuth2 credential + sua nguoi nhan that (thay ops-team@example.com).",
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "ops-team@example.com",
+        "subject": "={{ '[DailyOps] ' + $json.decision.summary }}",
+        "emailType": "text",
+        "message": "={{ $json.decision.summary + '\\n\\n' + $json.decision.reasoning }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "b-ticket",
+      "name": "Create Ticket",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        950,
+        750
+      ],
+      "notes": "Uses 'DailyOps Postgres' credential (auto-provisioned dev default; rotate in prod). Can tao credential 'DailyOps Postgres' (host postgres:5432, db dailyops) trong n8n UI.",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ `INSERT INTO tickets (ticket_id, type, priority, entity, status, recommendation, confidence, correlation_id) VALUES ('tck_' || substr(md5(random()::text), 1, 8), '${$json.ticket_payload.type}', '${$json.ticket_payload.priority}', '${$json.ticket_payload.entity}', 'OPEN', '${$json.recommended_action}', ${$json.decision.confidence}, '${$json.correlation_id}') RETURNING ticket_id` }}",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "31c77e42-be7b-4f35-9cd7-615a75e6e7ac",
+          "name": "DailyOps Postgres"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "b-vtick",
+      "name": "Verify Ticket",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        750
+      ],
+      "notes": "Lane-local verify: INSERT returned a ticket_id. Failure -> Record Failure lane.",
+      "parameters": {
+        "jsCode": "// TICKET-specific check: ticket_id co ton tai trong output INSERT khong?\nconst rows = $input.all().map((i) => i.json);\nconst agent = $('Route by action_type').first().json;\nconst ticketId = (rows[0] && rows[0].ticket_id) || null;\nconst ok = Boolean(ticketId);\nreturn [{ json: { correlation_id: agent.correlation_id, action_type: agent.action_type, ticket_id: ticketId, ticket_ok: ok, ...(ok ? {} : { error: 'Create Ticket returned no ticket_id' }) } }];"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "b-approval",
+      "name": "Needs Approval?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        950,
+        1050
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-approval-01",
+              "leftValue": "={{ $json.needs_approval }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "b-reqapproval",
+      "name": "Request Approval",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1250,
+        1200
+      ],
+      "onError": "continueErrorOutput",
+      "notes": "Uses 'DailyOps Postgres' credential (auto-provisioned dev default; rotate in prod). EXECUTE can approval -> ghi approvals=PENDING va DUNG lai. Resume qua Approval Decision webhook (xem sticky).",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ `INSERT INTO approvals (correlation_id, requested_action) VALUES ('${$json.correlation_id}', '${$json.recommended_action}') RETURNING correlation_id` }}",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "31c77e42-be7b-4f35-9cd7-615a75e6e7ac",
+          "name": "DailyOps Postgres"
+        }
+      }
+    },
+    {
+      "id": "b-notifyapr",
+      "name": "Notify Approver",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1550,
+        1200
+      ],
+      "notes": "TODO: gui 2 link nay cho human qua Telegram/Gmail (thay localhost bang WEBHOOK_URL that khi deploy). Nhanh ket thuc o day — resume qua webhook.",
+      "parameters": {
+        "jsCode": "// Tao link approve/reject cho human. Nhanh ket thuc o day; resume qua Approval Decision webhook.\nconst d = $input.first().json;\nconst base = 'http://localhost:5678/webhook/dailyops-approval';\nconst q = `correlation_id=${d.correlation_id}`;\nreturn [{ json: { correlation_id: d.correlation_id, action: d.recommended_action, approval_links: { approve: `${base}?${q}&decision=approve`, reject: `${base}?${q}&decision=reject` } } }];"
+      }
+    },
+    {
+      "id": "b-execute",
+      "name": "Execute Target API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1250,
+        950
+      ],
+      "onError": "continueErrorOutput",
+      "notes": "Chi chay khi: needs_approval == false (auto), HOAC approvals row = APPROVED (resume). Khong bao gio goi truc tiep tu Route.",
+      "parameters": {
+        "method": "POST",
+        "url": "https://example.com/api/execute",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ correlation_id: $json.correlation_id, action: $json.recommended_action }) }}",
+        "options": {
+          "timeout": 20000
+        }
+      }
+    },
+    {
+      "id": "b-unknown",
+      "name": "Unknown Action",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        700
+      ],
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nreturn [{ json: { ...d, error: 'Unknown action_type: ' + d.action_type } }];"
+      }
+    },
+    {
+      "id": "a-webhook",
+      "name": "Approval Decision",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        950,
+        1400
+      ],
+      "webhookId": "dailyops-approval",
+      "notes": "Human bam link approve/reject (GET ?correlation_id=...&decision=approve|reject). Resume cua approval loop — nam trong cot EXECUTE.",
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "dailyops-approval",
+        "responseMode": "onReceived",
+        "options": {}
+      }
+    },
+    {
+      "id": "a-record",
+      "name": "Record Approval Decision",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1250,
+        1400
+      ],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ `UPDATE approvals SET status = CASE WHEN LOWER('${$json.query.decision}') = 'approve' THEN 'APPROVED' WHEN LOWER('${$json.query.decision}') = 'reject' THEN 'REJECTED' ELSE UPPER('${$json.query.decision}') END, decided_by = 'human:webhook', decided_at = now() WHERE correlation_id = '${$json.query.correlation_id}' RETURNING correlation_id` }}",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "31c77e42-be7b-4f35-9cd7-615a75e6e7ac",
+          "name": "DailyOps Postgres"
+        }
+      },
+      "notes": "Uses 'DailyOps Postgres' credential (auto-provisioned dev default; rotate in prod). "
+    },
+    {
+      "id": "a-load",
+      "name": "Load Approval",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1550,
+        1400
+      ],
+      "notes": "Uses 'DailyOps Postgres' credential (auto-provisioned dev default; rotate in prod). Doc lai approvals row (single source of truth) truoc khi cho phep Execute.",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ `SELECT requested_action, status, correlation_id FROM approvals WHERE correlation_id = '${$json.correlation_id}'` }}",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "31c77e42-be7b-4f35-9cd7-615a75e6e7ac",
+          "name": "DailyOps Postgres"
+        }
+      }
+    },
+    {
+      "id": "a-approved",
+      "name": "Approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1850,
+        1400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-approved-01",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "APPROVED",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.string.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "notes": "Only status=APPROVED executes. REJECTED (or anything else) -> failure lane."
+    },
+    {
+      "id": "a-build",
+      "name": "Build Approved Execute",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1850,
+        1200
+      ],
+      "parameters": {
+        "jsCode": "// Resume sau approval: lay lai action da duoc human duyet (tu approvals row).\nconst r = $input.first().json;\nreturn [{ json: { correlation_id: r.correlation_id, recommended_action: r.requested_action } }];"
+      }
+    },
+    {
+      "id": "v-close",
+      "name": "Close Ticket",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1450,
+        750
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ `UPDATE tickets SET status='CLOSED' WHERE correlation_id='${$json.correlation_id}' RETURNING correlation_id` }}",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "31c77e42-be7b-4f35-9cd7-615a75e6e7ac",
+          "name": "DailyOps Postgres"
+        }
+      },
+      "notes": "Uses 'DailyOps Postgres' credential (auto-provisioned dev default; rotate in prod). ",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "v-success",
+      "name": "Record Success",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2100,
+        600
+      ],
+      "parameters": {
+        "jsCode": "const v = $input.first().json;\nreturn [{ json: { correlation_id: v.correlation_id || 'unknown', action_type: v.action_type || 'UNKNOWN', verified: true, finished_at: new Date().toISOString() } }];"
+      }
+    },
+    {
+      "id": "f-outcome",
+      "name": "Record Outcome",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2350,
+        600
+      ],
+      "notes": "Uses 'DailyOps Postgres' credential (auto-provisioned dev default; rotate in prod). Closed-loop evaluation: ghi outcome moi nhanh (success + failure), doc lap voi notify.",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ `INSERT INTO decision_outcomes (correlation_id, action_type, verified) VALUES ('${$json.correlation_id}', '${$json.action_type}', ${$json.verified}) RETURNING correlation_id` }}",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "31c77e42-be7b-4f35-9cd7-615a75e6e7ac",
+          "name": "DailyOps Postgres"
+        }
+      }
+    },
+    {
+      "id": "e-record",
+      "name": "Record Failure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2100,
+        900
+      ],
+      "parameters": {
+        "jsCode": "// Failure outcome (verified=false) + audit row. Khong phu thuoc notify.\nconst f = $input.first().json;\nconst action = f.action_type || (f.requested_action ? 'EXECUTE' : 'UNKNOWN');\nreturn [{ json: { correlation_id: f.correlation_id || 'unknown', action_type: action, actor: 'n8n', event: 'system.workflow_failed', verified: false, error: f.error || JSON.stringify(f).slice(0, 500), timestamp: new Date().toISOString() } }];"
+      }
+    },
+    {
+      "id": "e-retry",
+      "name": "Retry / Escalate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2350,
+        900
+      ],
+      "notes": "STUB phase nay: chua retry action-level (retry that o node Decide). Fail -> escalate human.",
+      "parameters": {
+        "jsCode": "// STUB: chua retry action-level trong phase nay. Chinh sach: fail -> escalate, khong tu retry ghi.\nconst f = $input.first().json;\nreturn [{ json: { ...f, retry_policy: 'no_auto_retry_in_this_phase', escalated: true } }];"
+      }
+    },
+    {
+      "id": "e-notify",
+      "name": "Notify Human",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2350,
+        1100
+      ],
+      "notes": "TODO: noi Telegram/Slack/Email node vao sau node nay (escalation).",
+      "parameters": {
+        "jsCode": "// Escalation stub: chuan bi thong bao cho human.\nconst f = $input.first().json;\nreturn [{ json: { ...f, escalation: { channel: 'telegram', text: `[ESCALATION] ${f.correlation_id}: ${f.error}` } } }];"
+      }
+    },
+    {
+      "id": "s-analyst",
+      "name": "Specialist — Business Analyst",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -650,
+        200
+      ],
+      "notes": "Agent-team member (Zone 2). Runs in parallel; result or error item flows into Join Specialists barrier.",
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "http://agent-service:8000/agent/specialist/business_analyst",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ correlation_id: $('Attach Channel Context').first().json.correlation_id, event: $('Attach Channel Context').first().json.event }) }}",
+        "options": {
+          "timeout": 20000
+        }
+      }
+    },
+    {
+      "id": "s-knowledge",
+      "name": "Specialist — Knowledge Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -650,
+        400
+      ],
+      "notes": "Agent-team member (Zone 2). Runs in parallel; result or error item flows into Join Specialists barrier.",
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "http://agent-service:8000/agent/specialist/knowledge_agent",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ correlation_id: $('Attach Channel Context').first().json.correlation_id, event: $('Attach Channel Context').first().json.event }) }}",
+        "options": {
+          "timeout": 20000
+        }
+      }
+    },
+    {
+      "id": "s-operations",
+      "name": "Specialist — Operations Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -650,
+        600
+      ],
+      "notes": "Agent-team member (Zone 2). Runs in parallel; result or error item flows into Join Specialists barrier.",
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "http://agent-service:8000/agent/specialist/operations_agent",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ correlation_id: $('Attach Channel Context').first().json.correlation_id, event: $('Attach Channel Context').first().json.event }) }}",
+        "options": {
+          "timeout": 20000
+        }
+      }
+    },
+    {
+      "id": "s-report",
+      "name": "Specialist — Report Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -650,
+        800
+      ],
+      "notes": "Agent-team member (Zone 2). Runs in parallel; result or error item flows into Join Specialists barrier.",
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "http://agent-service:8000/agent/specialist/report_agent",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ correlation_id: $('Attach Channel Context').first().json.correlation_id, event: $('Attach Channel Context').first().json.event }) }}",
+        "options": {
+          "timeout": 20000
+        }
+      }
+    },
+    {
+      "id": "s-aggregate",
+      "name": "Aggregate Specialist Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        50,
+        500
+      ],
+      "notes": "Zone 5a: merge supervisor decision + 4 specialist outputs (structured AgentResults) into one canonical object for routing.",
+      "parameters": {
+        "jsCode": "const sup = $('Attach Channel Context').first().json;\nfunction get(n){ try { return $(n).first().json; } catch(e){ return null; } }\nconst parts = ['Specialist — Business Analyst','Specialist — Knowledge Agent','Specialist — Operations Agent','Specialist — Report Agent'].map(get).filter(Boolean);\nconst evidence = [];\nconst errs = [];\nparts.forEach((p) => { if (p.error) { errs.push((p.agent || 'unknown') + ': ' + String(p.error).slice(0, 200)); return; } (p.evidence || []).forEach((e) => evidence.push({ source: (p.agent || '?') + ':' + (e.source || ''), content: String(e.content || '').slice(0, 300), score: e.score || 0 })); });\n(sup.evidence || []).forEach((e) => evidence.push(e));\nconst used = parts.map((p) => p.agent).filter(Boolean);\nconst specialists_used = Array.from(new Set([...(sup.specialists_used || []), ...used]));\nreturn [{ json: { ...sup, specialists_used, evidence, specialist_errors: errs, aggregated_at: new Date().toISOString() } }];"
+      }
+    },
+    {
+      "id": "s-policy",
+      "name": "Policy / Guardrail",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        350,
+        500
+      ],
+      "notes": "Zone 5b (visual mirror of agent-service Policy Engine): ALLOW | APPROVAL | DENY. DENY rewrites action_type to UNKNOWN so nothing executes.",
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst ra = String(d.recommended_action || '').toLowerCase();\nconst deny = /delete|drop|truncate|shutdown|destroy|rm -rf/.test(ra);\nlet verdict = 'ALLOW';\nif (deny) verdict = 'DENY';\nelse if (d.needs_approval) verdict = 'APPROVAL';\nif (verdict === 'DENY') return [{ json: { ...d, action_type: 'UNKNOWN', policy_verdict: verdict, error: 'Policy DENY: destructive action blocked' } }];\nreturn [{ json: { ...d, policy_verdict: verdict } }];"
+      }
+    },
+    {
+      "id": "s-join",
+      "name": "Join Specialists",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -350,
+        500
+      ],
+      "notes": "Fan-in barrier: waits for all 4 specialist branches, emits ONE empty item. This guarantees single execution downstream (no 4x tickets).",
+      "parameters": {
+        "mode": "chooseBranch",
+        "numberInputs": 4,
+        "chooseBranchMode": "waitForAll",
+        "output": "empty",
+        "options": {}
+      }
+    },
+    {
+      "id": "v-report",
+      "name": "Verify Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1450,
+        100
+      ],
+      "notes": "Lane-local verify: Sheets append succeeded (failures arrive via error output). Shapes the success outcome.",
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "jsCode": "const agent = $('Route by action_type').first().json;\nreturn [{ json: { correlation_id: agent.correlation_id || 'unknown', action_type: 'REPORT', verified: true } }];"
+      }
+    },
+    {
+      "id": "v-notify",
+      "name": "Verify Notify",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1450,
+        450
+      ],
+      "notes": "Lane-local verify: Gmail/Telegram accepted (failures arrive via error output). Shapes the success outcome.",
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "jsCode": "const agent = $('Route by action_type').first().json;\nreturn [{ json: { correlation_id: agent.correlation_id || 'unknown', action_type: 'NOTIFY', verified: true } }];"
+      }
+    },
+    {
+      "id": "v-action",
+      "name": "Verify Action",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        950
+      ],
+      "notes": "Lane-local verify: business API result accepted. Throws -> failure lane on contract breach.",
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "jsCode": "const agent = $('Route by action_type').first().json;\nconst out = $input.first().json;\nconst ok = !out.error && out.success !== false;\nif (!ok) throw new Error(out.error || 'execute verification failed');\nreturn [{ json: { correlation_id: agent.correlation_id || 'unknown', action_type: 'EXECUTE', verified: true } }];"
+      }
+    },
+    {
+      "id": "f-feedback",
+      "name": "Feedback / Eval",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2600,
+        600
+      ],
+      "notes": "Ending block: shapes outcome + eval metrics (automation / approval / success rates) for dashboards.",
+      "parameters": {
+        "jsCode": "const o = $input.first().json;\nreturn [{ json: { ...o, eval: { automated: o.verified === true, needs_human: o.verified !== true }, evaluated_at: new Date().toISOString() } }];"
+      }
+    },
+    {
+      "id": "z-input",
+      "name": "① INPUT",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1790,
+        -60
+      ],
+      "parameters": {
+        "content": "## ① INPUT\nTriggers only.\nDaily 08:00 / Webhook / Telegram.",
+        "height": 900,
+        "width": 320,
+        "color": 4
+      }
+    },
+    {
+      "id": "z-orch",
+      "name": "② AI ORCHESTRATION",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1440,
+        -60
+      ],
+      "parameters": {
+        "content": "## ② AI ORCHESTRATION\nSupervisor → specialist team (parallel) → Join (once) → Aggregate.",
+        "height": 1100,
+        "width": 1700,
+        "color": 4
+      }
+    },
+    {
+      "id": "z-decision",
+      "name": "③ DECISION",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        260,
+        -60
+      ],
+      "parameters": {
+        "content": "## ③ DECISION\nPolicy (ALLOW / APPROVAL / DENY) → Router.",
+        "height": 900,
+        "width": 480,
+        "color": 4
+      }
+    },
+    {
+      "id": "z-action",
+      "name": "④ ACTION",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        860,
+        -180
+      ],
+      "parameters": {
+        "content": "## ④ ACTION\n4 lanes: REPORT / NOTIFY / TICKET / EXECUTE.\nApproval lives inside EXECUTE.",
+        "height": 1800,
+        "width": 1150,
+        "color": 4
+      }
+    },
+    {
+      "id": "z-outcome",
+      "name": "⑤ OUTCOME",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2010,
+        -60
+      ],
+      "parameters": {
+        "content": "## ⑤ OUTCOME\nLane-local verify → Success / Failure → Outcome.",
+        "height": 1300,
+        "width": 520,
+        "color": 4
+      }
+    },
+    {
+      "id": "z-feedback",
+      "name": "FEEDBACK / EVAL",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2560,
+        -60
+      ],
+      "parameters": {
+        "content": "## FEEDBACK / EVAL\nOutcome → metrics.\nautomation / approval / success.",
+        "height": 700,
+        "width": 420,
+        "color": 4
+      }
+    }
+  ],
+  "connections": {
+    "Daily 08:00": {
+      "main": [
+        [
+          {
+            "node": "Normalize Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Business Event": {
+      "main": [
+        [
+          {
+            "node": "Normalize Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Chat In": {
+      "main": [
+        [
+          {
+            "node": "Normalize Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Event": {
+      "main": [
+        [
+          {
+            "node": "Supervisor — Decide (agent-service)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supervisor — Decide (agent-service)": {
+      "main": [
+        [
+          {
+            "node": "Attach Channel Context",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Record Decision",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach Channel Context": {
+      "main": [
+        [
+          {
+            "node": "Specialist — Business Analyst",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Specialist — Knowledge Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Specialist — Operations Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Specialist — Report Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Specialist — Business Analyst": {
+      "main": [
+        [
+          {
+            "node": "Join Specialists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Specialist — Knowledge Agent": {
+      "main": [
+        [
+          {
+            "node": "Join Specialists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Specialist — Operations Agent": {
+      "main": [
+        [
+          {
+            "node": "Join Specialists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Specialist — Report Agent": {
+      "main": [
+        [
+          {
+            "node": "Join Specialists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Join Specialists": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Specialist Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Specialist Results": {
+      "main": [
+        [
+          {
+            "node": "Policy / Guardrail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Policy / Guardrail": {
+      "main": [
+        [
+          {
+            "node": "Route by action_type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by action_type": {
+      "main": [
+        [
+          {
+            "node": "Build Report Row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Has Telegram Chat?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Needs Approval?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unknown Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Report Row": {
+      "main": [
+        [
+          {
+            "node": "Append Google Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append Google Sheet": {
+      "main": [
+        [
+          {
+            "node": "Verify Report",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Report": {
+      "main": [
+        [
+          {
+            "node": "Record Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Telegram Chat?": {
+      "main": [
+        [
+          {
+            "node": "Reply Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Gmail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply Telegram": {
+      "main": [
+        [
+          {
+            "node": "Send Gmail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Gmail": {
+      "main": [
+        [
+          {
+            "node": "Verify Notify",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Notify": {
+      "main": [
+        [
+          {
+            "node": "Record Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Ticket": {
+      "main": [
+        [
+          {
+            "node": "Verify Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Ticket": {
+      "main": [
+        [
+          {
+            "node": "Close Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Close Ticket": {
+      "main": [
+        [
+          {
+            "node": "Record Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Approval?": {
+      "main": [
+        [
+          {
+            "node": "Request Approval",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execute Target API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Request Approval": {
+      "main": [
+        [
+          {
+            "node": "Notify Approver",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approval Decision": {
+      "main": [
+        [
+          {
+            "node": "Record Approval Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Approval Decision": {
+      "main": [
+        [
+          {
+            "node": "Load Approval",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Approval": {
+      "main": [
+        [
+          {
+            "node": "Approved?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approved?": {
+      "main": [
+        [
+          {
+            "node": "Build Approved Execute",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Approved Execute": {
+      "main": [
+        [
+          {
+            "node": "Execute Target API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Target API": {
+      "main": [
+        [
+          {
+            "node": "Verify Action",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Action": {
+      "main": [
+        [
+          {
+            "node": "Record Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unknown Action": {
+      "main": [
+        [
+          {
+            "node": "Record Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Success": {
+      "main": [
+        [
+          {
+            "node": "Record Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Failure": {
+      "main": [
+        [
+          {
+            "node": "Record Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Retry / Escalate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry / Escalate": {
+      "main": [
+        [
+          {
+            "node": "Notify Human",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Outcome": {
+      "main": [
+        [
+          {
+            "node": "Feedback / Eval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
