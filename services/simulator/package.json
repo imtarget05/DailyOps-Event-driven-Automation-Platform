@@ -1,0 +1,10 @@
+{
+  "name": "dailyops-simulator",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "simulate": "node simulator.js",
+    "loadtest": "node loadtest.js"
+  },
+  "dependencies": { "amqplib": "^0.10.4" }
+}

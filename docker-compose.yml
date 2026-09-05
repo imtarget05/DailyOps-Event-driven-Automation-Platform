@@ -1,0 +1,171 @@
+name: dailyops
+
+x-n8n-env: &n8n-env
+  N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-dailyops-dev-encryption-key-change-me}
+  GENERIC_TIMEZONE: UTC
+  N8N_DIAGNOSTICS_ENABLED: "false"
+  N8N_RUNNERS_ENABLED: "true"
+  N8N_SECURE_COOKIE: "false"
+  N8N_HOST: localhost
+  N8N_PORT: "5678"
+  N8N_PROTOCOL: http
+  WEBHOOK_URL: http://localhost:5678/
+
+services:
+  # ---------------------------------------------------------------- broker
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: dailyops-rabbitmq
+    volumes:
+      - ./infra/rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+    ports:
+      - "5672:5672"   # AMQP
+      - "15672:15672" # Management UI (dailyops/dailyops)
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-dailyops}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-dailyops}
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
+  redis:
+    image: redis:7-alpine
+    container_name: dailyops-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  # ------------------------------------------------- event gateway (core)
+  # Consumes q.n8n.* from exchange `dailyops.events`, enforces
+  # idempotency + dedup, dispatches to n8n webhooks with retry -> DLQ,
+  # and emits every `dailyops_*` Prometheus metric.
+  gateway:
+    build: ./services/gateway
+    container_name: dailyops-gateway
+    environment:
+      GATEWAY_PORT: "9090"
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-dailyops}:${RABBITMQ_PASS:-dailyops}@rabbitmq:5672/%2F
+      RABBITMQ_MGMT_URL: http://rabbitmq:15672
+      RABBITMQ_MGMT_USER: ${RABBITMQ_USER:-dailyops}
+      RABBITMQ_MGMT_PASS: ${RABBITMQ_PASS:-dailyops}
+      REDIS_URL: redis://redis:6379
+      N8N_BASE_URL: http://n8n:5678
+      MAX_CONCURRENCY: ${MAX_CONCURRENCY:-8}
+      SUPPRESSION_WINDOW_S: ${SUPPRESSION_WINDOW_S:-300}
+      RETRY_MAX: ${RETRY_MAX:-3}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      JIRA_BASE_URL: ${JIRA_BASE_URL:-}
+      JIRA_PROJECT_KEY: ${JIRA_PROJECT_KEY:-DOPS}
+    ports:
+      - "9090:9090" # API + /metrics
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:9090/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  # --------------------------------------------------------------- n8n
+  # One-shot init: imports + activates all workflows from ./workflows
+  n8n-init:
+    image: n8nio/n8n:latest
+    container_name: dailyops-n8n-init
+    entrypoint: ["/bin/sh", "/init.sh"]
+    volumes:
+      - ./infra/n8n/init.sh:/init.sh:ro
+      - ./workflows:/workflows:ro
+      - n8n_data:/home/node/.n8n
+    environment:
+      <<: *n8n-env
+    restart: "no"
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: dailyops-n8n
+    environment:
+      <<: *n8n-env
+      N8N_METRICS: "true"
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      n8n-init:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:5678/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+
+  # ------------------------------------- mock Kubernetes API (demo only)
+  # Simulates pods so the Auto-fix workflow is fully demoable locally.
+  # Swap its base URL for a real K8s API in production.
+  mock-k8s:
+    build: ./services/mock-k8s
+    container_name: dailyops-mock-k8s
+    ports:
+      - "9100:9100"
+
+  # ------------------------------------------------------ observability
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: dailyops-prometheus
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9091:9090" # host 9091 to avoid clashing with the gateway
+    depends_on:
+      - gateway
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: dailyops-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3001:3000" # host 3001 (3000 is often taken by other dev services)
+    depends_on:
+      - prometheus
+
+  # ----------------------------------------- scenario runner / load test
+  simulator:
+    build: ./services/simulator
+    container_name: dailyops-simulator
+    profiles: ["tools"]
+    environment:
+      AMQP_URL: amqp://${RABBITMQ_USER:-dailyops}:${RABBITMQ_PASS:-dailyops}@rabbitmq:5672/%2F
+      GATEWAY_URL: http://gateway:9090
+    volumes:
+      - ./artifacts:/artifacts
+    depends_on:
+      - gateway
+
+volumes:
+  n8n_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:

@@ -1,0 +1,51 @@
+{
+  "name": "DailyOps — Workflow E: Error Handler",
+  "id": "dailyopsErrorE04",
+  "nodes": [
+    {
+      "id": "e1-webhook",
+      "name": "Error Received",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-400, 300],
+      "webhookId": "dailyops-error-handler",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "error-handler",
+        "options": {}
+      }
+    },
+    {
+      "id": "e2-init",
+      "name": "Init",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-180, 300],
+      "parameters": {
+        "jsCode": "const b = $json.body || {};\nconst item = {\n  failed_workflow: b.workflow || b.failed_workflow || 'unknown',\n  event_id: b.event_id || null,\n  correlation_id: b.correlation_id || b.event_id || null,\n  error: b.error ? String(b.error.message || b.error) : 'unhandled workflow failure',\n};\nreturn [{ json: item }];"
+      }
+    },
+    {
+      "id": "e3-publish",
+      "name": "Publish Workflow Failed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [40, 300],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "http://gateway:8080/publish",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ event_id: 'evt_' + $execution.id + '-err', event_type: 'system.workflow_failed', source: 'n8n.error-handler', timestamp: new Date().toISOString(), severity: 'critical', correlation_id: $json.correlation_id, payload: { failed_workflow: $json.failed_workflow, error: $json.error, original_event_id: $json.event_id } }) }}",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Error Received": { "main": [[{ "node": "Init", "type": "main", "index": 0 }]] },
+    "Init": { "main": [[{ "node": "Publish Workflow Failed", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "pinData": {}
+}

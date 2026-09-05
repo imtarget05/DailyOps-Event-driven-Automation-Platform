@@ -1,0 +1,139 @@
+{
+  "title": "DailyOps — Event-driven Automation",
+  "uid": "dailyops-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "10s",
+  "time": { "from": "now-30m", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Events Received",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(dailyops_events_received_total)", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "area" }
+    },
+    {
+      "id": 2, "type": "stat", "title": "Active Executions",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(dailyops_active_executions)", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }, { "color": "orange", "value": 6 }, { "color": "red", "value": 8 }] } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "area" }
+    },
+    {
+      "id": 3, "type": "stat", "title": "Event-to-Action p95",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "histogram_quantile(0.95, sum(rate(dailyops_event_to_action_latency_seconds_bucket[5m])) by (le))", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 10 }, { "color": "red", "value": 60 }] }, "unit": "s" }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "area" }
+    },
+    {
+      "id": 4, "type": "stat", "title": "Failures",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(increase(dailyops_events_failed_total[30m]))", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }] } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "area" }
+    },
+    {
+      "id": 5, "type": "stat", "title": "Deduplicated",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(increase(dailyops_events_deduplicated_total[30m]))", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "purple", "value": null }] } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "area" }
+    },
+    {
+      "id": 6, "type": "stat", "title": "Dead-Letters",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(increase(dailyops_deadletter_total[30m]))", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }] } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "area" }
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Event Rate by Type",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(rate(dailyops_events_received_total[1m])) by (event_type)", "legendFormat": "{{event_type}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 10, "lineWidth": 2 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["sum"] } }
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Concurrent Executions (max concurrency = 8)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(dailyops_active_executions) by (workflow)", "legendFormat": "{{workflow}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 25, "lineWidth": 2 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "id": 9, "type": "timeseries", "title": "Event-to-Action Latency (p50 / p95)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum(rate(dailyops_event_to_action_latency_seconds_bucket[5m])) by (le))", "legendFormat": "p50", "refId": "A" },
+        { "expr": "histogram_quantile(0.95, sum(rate(dailyops_event_to_action_latency_seconds_bucket[5m])) by (le))", "legendFormat": "p95", "refId": "B" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 10, "lineWidth": 2 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "id": 10, "type": "timeseries", "title": "Broker vs Workflow Startup Latency (p95)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "histogram_quantile(0.95, sum(rate(dailyops_broker_latency_seconds_bucket[5m])) by (le))", "legendFormat": "broker", "refId": "A" },
+        { "expr": "histogram_quantile(0.95, sum(rate(dailyops_dispatch_latency_seconds_bucket[5m])) by (le))", "legendFormat": "workflow startup", "refId": "B" },
+        { "expr": "histogram_quantile(0.95, sum(rate(dailyops_workflow_duration_seconds_bucket[5m])) by (le))", "legendFormat": "workflow duration", "refId": "C" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 10, "lineWidth": 2 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "id": 11, "type": "timeseries", "title": "Reliability: Retries / Dead-Letters / Invalid / Idempotent Skips",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum(rate(dailyops_retry_total[5m]))", "legendFormat": "retries", "refId": "A" },
+        { "expr": "sum(rate(dailyops_deadletter_total[5m]))", "legendFormat": "dead-letters", "refId": "B" },
+        { "expr": "sum(rate(dailyops_events_invalid_total[5m]))", "legendFormat": "invalid events", "refId": "C" },
+        { "expr": "sum(rate(dailyops_events_idempotent_skipped_total[5m]))", "legendFormat": "idempotent skips", "refId": "D" }
+      ],
+      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 10, "lineWidth": 2 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["sum"] } }
+    },
+    {
+      "id": 12, "type": "timeseries", "title": "Broker Queue Backlog",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "dailyops_queue_depth", "legendFormat": "{{queue}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 10, "lineWidth": 2 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["max"] } }
+    },
+    {
+      "id": 13, "type": "timeseries", "title": "Outcomes: Processed by Status",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(rate(dailyops_events_processed_total[5m])) by (workflow, status)", "legendFormat": "{{workflow}}/{{status}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 10, "lineWidth": 2 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["sum"] } }
+    },
+    {
+      "id": 14, "type": "timeseries", "title": "Business: Notifications & Tickets",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum(rate(dailyops_notifications_sent_total[5m])) by (channel)", "legendFormat": "notify/{{channel}}", "refId": "A" },
+        { "expr": "sum(rate(dailyops_notifications_skipped_total[5m]))", "legendFormat": "notify/skipped", "refId": "B" },
+        { "expr": "sum(rate(dailyops_tickets_created_total[5m])) by (backend)", "legendFormat": "tickets/{{backend}}", "refId": "C" }
+      ],
+      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 10, "lineWidth": 2 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["sum"] } }
+    }
+  ]
+}

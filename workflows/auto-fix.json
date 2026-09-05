@@ -1,0 +1,294 @@
+{
+  "name": "DailyOps — Workflow A: Auto Fix",
+  "id": "dailyopsAutoFixA01",
+  "nodes": [
+    {
+      "id": "a1-webhook",
+      "name": "Event Received",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-400, 300],
+      "webhookId": "dailyops-auto-fix",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "auto-fix",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "a2-init",
+      "name": "Init & Start Timer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-180, 300],
+      "parameters": {
+        "jsCode": "const b = $json.body || {};\nconst item = {\n  event_id: b.event_id,\n  event_type: b.event_type,\n  source: b.source,\n  severity: b.severity || 'unknown',\n  service: b.service || 'unknown',\n  dedup_key: b.dedup_key || null,\n  payload: b.payload || {},\n  started_at: new Date().toISOString(),\n};\nitem.response = { accepted: true, event_id: item.event_id, execution_id: $execution.id, workflow: 'auto-fix' };\nreturn [{ json: item }];"
+      }
+    },
+    {
+      "id": "a3-respond",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [40, 120],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.response }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "a4-severity",
+      "name": "Severity Critical/High?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [260, 300],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "sev-1",
+              "leftValue": "={{ $json.severity }}",
+              "rightValue": "^(critical|high)$",
+              "operator": { "type": "string", "operation": "regex" }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a5-allowed",
+      "name": "Remediation Allowed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [480, 200],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "rem-1",
+              "leftValue": "={{ $json.payload.remediation }}",
+              "rightValue": "restart_pod",
+              "operator": { "type": "string", "operation": "equals" }
+            },
+            {
+              "id": "rem-2",
+              "leftValue": "={{ $json.payload.pod }}",
+              "rightValue": "",
+              "operator": { "type": "string", "operation": "notEmpty" }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a6-restart",
+      "name": "Restart Pod",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 200],
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "parameters": {
+        "method": "POST",
+        "url": "=http://mock-k8s:9100/api/v1/pods/{{ $('Init & Start Timer').item.json.payload.namespace || 'default' }}/{{ $('Init & Start Timer').item.json.payload.pod }}/restart",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ event_id: $('Init & Start Timer').item.json.event_id }) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "a7-waitretry",
+      "name": "Wait 3s Before Retry",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [920, 420],
+      "parameters": { "resume": "timeInterval", "amount": 3, "unit": "seconds" }
+    },
+    {
+      "id": "a8-restartretry",
+      "name": "Restart Pod (Retry)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1140, 420],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "=http://mock-k8s:9100/api/v1/pods/{{ $('Init & Start Timer').item.json.payload.namespace || 'default' }}/{{ $('Init & Start Timer').item.json.payload.pod }}/restart",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ event_id: $('Init & Start Timer').item.json.event_id, attempt: 2 }) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "a9-waitsettle",
+      "name": "Wait 2s (Restart Settle)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1140, 100],
+      "parameters": { "resume": "timeInterval", "amount": 2, "unit": "seconds" }
+    },
+    {
+      "id": "a10-health",
+      "name": "Health Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1360, 100],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "GET",
+        "url": "=http://mock-k8s:9100/api/v1/pods/{{ $('Init & Start Timer').item.json.payload.namespace || 'default' }}/{{ $('Init & Start Timer').item.json.payload.pod }}/health",
+        "options": {}
+      }
+    },
+    {
+      "id": "a11-healthy",
+      "name": "Pod Healthy?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1580, 100],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "ok-1",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "healthy",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a12-completed",
+      "name": "Build Result Completed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1800, 0],
+      "parameters": {
+        "jsCode": "const i = $('Init & Start Timer').item.json;\nreturn [{ json: { publish: {\n  event_id: 'evt_' + $execution.id + '-result',\n  event_type: 'auto_fix.completed',\n  source: 'n8n.auto-fix',\n  timestamp: new Date().toISOString(),\n  correlation_id: i.event_id,\n  correlation_workflow: 'auto-fix',\n  severity: i.severity,\n  service: i.service,\n  payload: { pod: i.payload.pod, namespace: i.payload.namespace || 'default', remediation: i.payload.remediation, result: 'success', started_at: i.started_at }\n} } }];"
+      }
+    },
+    {
+      "id": "a13-failed",
+      "name": "Build Result Failed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1800, 300],
+      "parameters": {
+        "jsCode": "const i = $('Init & Start Timer').item.json;\nconst err = $json && $json.error\n  ? ($json.error.message || $json.error.description || JSON.stringify($json.error))\n  : ($json && $json.status ? `health check failed: pod status = ${$json.status}` : 'unknown error');\nreturn [{ json: { publish: {\n  event_id: 'evt_' + $execution.id + '-result',\n  event_type: 'auto_fix.failed',\n  source: 'n8n.auto-fix',\n  timestamp: new Date().toISOString(),\n  correlation_id: i.event_id,\n  correlation_workflow: 'auto-fix',\n  severity: i.severity,\n  service: i.service,\n  payload: { pod: i.payload.pod, namespace: i.payload.namespace || 'default', remediation: i.payload.remediation, result: 'failure', error: String(err), started_at: i.started_at }\n} } }];"
+      }
+    },
+    {
+      "id": "a14-publish",
+      "name": "Publish Result",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2020, 150],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "http://gateway:8080/publish",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.publish) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "a15-skipped",
+      "name": "Build Skipped Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 560],
+      "parameters": {
+        "jsCode": "const i = $('Init & Start Timer').item.json;\nreturn [{ json: { publish: {\n  event_id: 'evt_' + $execution.id + '-result',\n  event_type: 'auto_fix.skipped',\n  source: 'n8n.auto-fix',\n  timestamp: new Date().toISOString(),\n  correlation_id: i.event_id,\n  correlation_workflow: 'auto-fix',\n  severity: i.severity,\n  service: i.service,\n  payload: { pod: i.payload.pod || null, reason: 'severity below threshold or remediation not allowed', started_at: i.started_at }\n} } }];"
+      }
+    },
+    {
+      "id": "a16-publishskipped",
+      "name": "Publish Skipped",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 560],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "http://gateway:8080/publish",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.publish) }}",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Event Received": { "main": [[{ "node": "Init & Start Timer", "type": "main", "index": 0 }]] },
+    "Init & Start Timer": {
+      "main": [
+        [
+          { "node": "Respond to Webhook", "type": "main", "index": 0 },
+          { "node": "Severity Critical/High?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Severity Critical/High?": {
+      "main": [
+        [{ "node": "Remediation Allowed?", "type": "main", "index": 0 }],
+        [{ "node": "Build Skipped Event", "type": "main", "index": 0 }]
+      ]
+    },
+    "Remediation Allowed?": {
+      "main": [
+        [{ "node": "Restart Pod", "type": "main", "index": 0 }],
+        [{ "node": "Build Skipped Event", "type": "main", "index": 0 }]
+      ]
+    },
+    "Restart Pod": {
+      "main": [
+        [{ "node": "Wait 2s (Restart Settle)", "type": "main", "index": 0 }],
+        [{ "node": "Wait 3s Before Retry", "type": "main", "index": 0 }]
+      ]
+    },
+    "Wait 3s Before Retry": { "main": [[{ "node": "Restart Pod (Retry)", "type": "main", "index": 0 }]] },
+    "Restart Pod (Retry)": {
+      "main": [
+        [{ "node": "Wait 2s (Restart Settle)", "type": "main", "index": 0 }],
+        [{ "node": "Build Result Failed", "type": "main", "index": 0 }]
+      ]
+    },
+    "Wait 2s (Restart Settle)": { "main": [[{ "node": "Health Check", "type": "main", "index": 0 }]] },
+    "Health Check": {
+      "main": [
+        [{ "node": "Pod Healthy?", "type": "main", "index": 0 }],
+        [{ "node": "Build Result Failed", "type": "main", "index": 0 }]
+      ]
+    },
+    "Pod Healthy?": {
+      "main": [
+        [{ "node": "Build Result Completed", "type": "main", "index": 0 }],
+        [{ "node": "Build Result Failed", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Result Completed": { "main": [[{ "node": "Publish Result", "type": "main", "index": 0 }]] },
+    "Build Result Failed": { "main": [[{ "node": "Publish Result", "type": "main", "index": 0 }]] },
+    "Build Skipped Event": { "main": [[{ "node": "Publish Skipped", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "pinData": {}
+}

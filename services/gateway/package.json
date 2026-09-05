@@ -1,0 +1,17 @@
+{
+  "name": "dailyops-gateway",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DailyOps Event Gateway: RabbitMQ -> n8n dispatcher with idempotency, dedup, retry, DLQ and Prometheus metrics",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "amqplib": "^0.10.4",
+    "express": "^4.19.2",
+    "nodemailer": "^6.9.14",
+    "prom-client": "^15.1.2",
+    "redis": "^4.7.0"
+  }
+}
