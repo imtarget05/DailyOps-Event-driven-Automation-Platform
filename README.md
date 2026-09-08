@@ -229,7 +229,7 @@ Endpoints (agent-service):
 
 ```bash
 cd agent-service
-python3 -m pytest tests/ -q        # 148 tests: contract/orchestrator + auth + policy hardening + idempotency + destructive-word centralization
+python3 -m pytest tests/ -q        # 156 tests: contract/orchestrator + auth + policy hardening + idempotency + destructive-word centralization
 python3 bench_parallel.py          # T_sequential vs T_parallel + parallel_speedup (đo được ~3.1x với 3 specialists)
 node ../scripts/validate-workflows.js   # validate canvas n8n (51 nodes OK)
 ```
