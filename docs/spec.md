@@ -72,7 +72,7 @@ self-authorization claims → the deterministic policy engine returns
 | H | smalltalk | NOTIFY, zero specialists, friendly reply |
 | I | advisory request | REPORT (council only), `advisory_report_only`, never TICKET/EXECUTE |
 
-Automated cross-check: `pytest agent-service/tests/ -q` → 165 passed; pyright → 0 errors.
+Automated cross-check: `pytest agent-service/tests/ -q` → 170 passed; pyright → 0 errors.
 
 ## 7. Out of Scope / Environment-Blocked (pending full env)
 

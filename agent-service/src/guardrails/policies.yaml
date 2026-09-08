@@ -16,6 +16,21 @@ thresholds:
 inventory_risk:
   low_risk_days: 3
   medium_risk_days: 7
+# ARCH-005: advisory council tunables (grounding threshold, confidences, scoring).
+# Defaults match the former hardcoded values; only used by the advisory council agent.
+advisory_council:
+  grounding_threshold: 0.12
+  ungrounded_confidence: 0.35
+  grounded_confidence: 0.78
+  top_k: 3
+  snippet_limit: 3
+  text_query_preview: 120
+  question_preview: 80
+  cite_preview: 90
+  evidence_preview: 300
+  recommendation_preview: 120
+  evidence_score_base: 0.9
+  score_decay: 0.05
 knowledge_agent:
   top_k: 3                 # policy-snippet retrieval depth
   snippet_limit: 3         # dedup/aggregation cap after broader round
