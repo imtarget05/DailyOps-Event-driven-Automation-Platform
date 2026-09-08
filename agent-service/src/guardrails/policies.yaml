@@ -1,0 +1,102 @@
+# DailyOps v2 business policies — auto vs approval.
+# LLM may only PROPOSE. This file (deterministic rules) decides execution rights.
+# Deterministic thresholds (single source of truth for the Policy Engine).
+thresholds:
+  restock_auto_max: 500   # restock qty <= this => auto ALLOW; > => APPROVAL
+  finance_refund_auto_max: 200  # refund amount <= this => auto note; > => APPROVAL
+
+# Agent runtime tunables (ARCH-004/005) — single place to tune agent behavior
+# without code changes. Defaults match the former hardcoded values.
+# Agent runtime tunables (ARCH-004/005) — single place to tune agent behavior
+# without code changes. Defaults match the former hardcoded values.
+# ARCH-003: inventory risk thresholds in days of stock coverage.
+#   stock_days < low_risk_days      => HIGH risk (restock recommended)
+#   low_risk_days <= stock_days < medium_risk_days => MEDIUM
+#   stock_days >= medium_risk_days  => LOW
+inventory_risk:
+  low_risk_days: 3
+  medium_risk_days: 7
+# ARCH-005: advisory council tunables (grounding threshold, confidences, scoring).
+# Defaults match the former hardcoded values; only used by the advisory council agent.
+advisory_council:
+  grounding_threshold: 0.12
+  ungrounded_confidence: 0.35
+  grounded_confidence: 0.78
+  top_k: 3
+  snippet_limit: 3
+  text_query_preview: 120
+  question_preview: 80
+  cite_preview: 90
+  evidence_preview: 300
+  recommendation_preview: 120
+  evidence_score_base: 0.9
+  score_decay: 0.05
+knowledge_agent:
+  top_k: 3                 # policy-snippet retrieval depth
+  snippet_limit: 3         # dedup/aggregation cap after broader round
+  kb_top_k: 2              # vector-store (ingested SOP) hits
+  max_rounds: 2            # sufficiency retry rounds
+  text_preview: 120        # chars of event text folded into the query
+  kb_score_base: 0.95      # evidence score base for knowledge-base hits
+  policy_score_base: 0.9   # evidence score base for policy-RAG hits
+  score_decay: 0.05        # per-rank score decay for both evidence kinds
+  confidence_ok: 0.85      # confidence when sufficiency is satisfied
+  confidence_missing: 0.4  # confidence when sufficiency is not satisfied
+  sufficient_terms: ["restock", "refund", "pricing", "report", "notify", "ticket", "approval", "inventory"]
+
+policies:
+  - name: report_auto
+    when: {action_type: REPORT}
+    mode: auto
+  - name: sheets_update_auto
+    when: {action_type: REPORT, target: sheets}
+    mode: auto
+  - name: notify_auto
+    when: {action_type: NOTIFY}
+    mode: auto
+  - name: ticket_auto
+    when: {action_type: TICKET}
+    mode: auto
+  - name: inventory_policy.restock_auto_threshold
+    when: {action_type: TICKET, ticket_type: inventory_risk, restock_qty_lte: 500}
+    mode: auto
+  - name: inventory_policy.restock_approval_threshold
+    when: {action_type: EXECUTE, ticket_type: inventory_risk, restock_qty_gt: 500}
+    mode: approval
+  - name: pricing_change_approval
+    when: {action_type: EXECUTE, target: pricing}
+    mode: approval
+  - name: refund_large_approval
+    when: {action_type: EXECUTE, target: refund}
+    mode: approval
+  - name: advisory_report_only
+    when: {action_type: REPORT, ticket_type: advisory}
+    mode: auto
+  - name: advisory_execute_deny
+    when: {action_type: EXECUTE, ticket_type: advisory}
+    mode: deny
+  # --- Domain expansion: CRM / Marketing / HR / Finance (deterministic gates) ---
+  - name: crm_bulk_update_approval
+    when: {action_type: EXECUTE, ticket_type: crm_bulk_update}
+    mode: approval
+  - name: crm_data_export_approval
+    when: {action_type: EXECUTE, ticket_type: crm_data_export}
+    mode: approval
+  - name: marketing_budget_spend_approval
+    when: {action_type: EXECUTE, ticket_type: marketing_spend}
+    mode: approval
+  - name: marketing_campaign_report_only
+    when: {action_type: REPORT, ticket_type: marketing_spend}
+    mode: auto
+  - name: hr_offboarding_approval
+    when: {action_type: EXECUTE, ticket_type: hr_offboarding}
+    mode: approval
+  - name: hr_employee_data_report_only
+    when: {action_type: REPORT, ticket_type: hr_employee_data}
+    mode: auto
+  - name: finance_refund_auto_note
+    when: {action_type: TICKET, ticket_type: finance_refund, refund_amount_lte: 200}
+    mode: auto
+  - name: finance_refund_approval
+    when: {action_type: EXECUTE, ticket_type: finance_refund, refund_amount_gt: 200}
+    mode: approval

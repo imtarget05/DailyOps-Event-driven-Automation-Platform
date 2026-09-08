@@ -1,0 +1,11 @@
+# Dev/local dependencies (Python 3.12+). The pinned versions in requirements.txt
+# are locked for the python:3.12-slim Docker image; local machines running newer
+# CPython (e.g. 3.14) need the looser ranges below.
+# Install:  pip install -r requirements-dev.txt
+fastapi>=0.115.6
+uvicorn[standard]
+pydantic>=2.11
+pyyaml>=6.0.2
+httpx>=0.28.1
+pytest>=8.3.4
+pyright>=1.1.300
