@@ -9,13 +9,13 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -1440,
-        1080
+        -1420,
+        920
       ],
       "parameters": {
-        "content": "CONTRACT: n8n calls POST /agent/decide only. Reasoning + policy live in agent-service.",
-        "height": 220,
-        "width": 300,
+        "content": "CONTRACT: n8n chỉ orchestrate (fetch → decide → route → verify). LLM + RAG + Policy nằm 100% trong agent-service.",
+        "height": 160,
+        "width": 420,
         "color": 4
       }
     },
@@ -25,14 +25,14 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        1250,
-        1560
+        1030,
+        1680
       ],
       "parameters": {
-        "content": "APPROVAL: PENDING → human link → APPROVED executes, else reject. Never auto-execute when needs_approval=true.",
-        "height": 150,
-        "width": 600,
-        "color": 4
+        "content": "APPROVAL LOOP: Request Approval (PENDING) → human bấm link → Approval Decision webhook → APPROVED mới Execute. Không auto-execute khi needs_approval=true.",
+        "height": 140,
+        "width": 1020,
+        "color": 2
       }
     },
     {
@@ -41,8 +41,8 @@
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [
-        -1700,
-        150
+        -2200,
+        180
       ],
       "parameters": {
         "rule": {
@@ -61,8 +61,8 @@
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
-        -1700,
-        400
+        -2200,
+        430
       ],
       "webhookId": "dailyops-business-event",
       "parameters": {
@@ -78,8 +78,8 @@
       "type": "n8n-nodes-base.telegramTrigger",
       "typeVersion": 1.2,
       "position": [
-        -1700,
-        650
+        -2200,
+        680
       ],
       "notes": "Can tao Telegram credential (bot token tu BotFather) trong n8n UI. Luu y: Telegram chi goi duoc webhook qua public URL — chay tunnel (cloudflared/ngrok) va set WEBHOOK_URL tuong ung.",
       "parameters": {
@@ -95,8 +95,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -1350,
-        400
+        -1820,
+        430
       ],
       "parameters": {
         "jsCode": "// INGESTION + NORMALIZATION: schedule / webhook / telegram -> Event schema chung.\nconst raw = $input.first().json;\nconst body = raw.body || {};\nconst now = new Date();\nconst p = (n) => String(n).padStart(2, '0');\nconst stamp = `${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}_${p(now.getHours())}${p(now.getMinutes())}`;\nconst uid = Math.random().toString(36).slice(2, 8);\nlet event;\nif (raw.chat) {\n  event = { type: 'telegram_chat', entity: String((raw.chat && raw.chat.id) || 'unknown'), payload: { text: raw.text || '', chat_id: (raw.chat && raw.chat.id) || null, from: (raw.from && raw.from.username) || '', source: 'telegram' } };\n} else if (raw.body) {\n  event = { type: body.type || 'business_event', entity: body.entity || 'unknown', payload: body.payload || {} };\n} else {\n  event = { type: 'inventory_check', entity: 'product_A', payload: { stock: 15, avg_daily_sales: 8 } };\n}\n// TODO: thay payload demo bang node Fetch (Sheets/ERP/CRM) truoc Normalize.\nconst prefix = event.payload && event.payload.source === 'telegram' ? 'tg' : 'run';\nreturn [{ json: {\n  correlation_id: body.correlation_id || `${prefix}_${stamp}_${uid}`,\n  event,\n  context: { history_window_days: 30, requested_by: 'dailyops-unified' }\n}}];"
@@ -108,8 +108,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -1350,
-        600
+        -1100,
+        430
       ],
       "notes": "Plumbing thuan orchestration (khong reasoning): gop DecideResponse + Event goc de giu chat_id cho nhanh NOTIFY.",
       "parameters": {
@@ -122,10 +122,10 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        -1000,
-        500
+        -1420,
+        430
       ],
-      "notes": "SUPERVISOR (agent-service, §4): classify -> delegate to specialists (asyncio.gather) -> aggregate -> policy gate. Returns canonical decision + specialists_used + evidence.",
+      "notes": "SUPERVISOR (agent-service, §4): classify -> delegate to specialists (asyncio.gather) -> aggregate -> policy gate. Returns canonical decision + specialists_used + evidence. Lau error: route to error output -> Record Failure -> TTL escalation -> Notify Human.",
       "onError": "continueErrorOutput",
       "retryOnFail": true,
       "maxTries": 3,
@@ -137,7 +137,16 @@
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ correlation_id: $json.correlation_id, event: $json.event, context: $json.context }) }}",
         "options": {
-          "timeout": 20000
+          "timeout": 20000,
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "X-API-Key",
+                "value": "={{ $env.AGENT_API_KEY || \"\" }}"
+              }
+            ]
+          }
         }
       }
     },
@@ -147,8 +156,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        -1000,
-        750
+        -1420,
+        730
       ],
       "notes": "Uses 'DailyOps Postgres' credential (auto-provisioned dev default; rotate in prod). Audit moi decision (contract 10 fields, §4 review). decision_id sinh SQL-side. raw_json bo qua chu y quote.",
       "parameters": {
@@ -169,8 +178,8 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.2,
       "position": [
-        600,
-        500
+        640,
+        505
       ],
       "parameters": {
         "rules": {
@@ -289,8 +298,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        950,
-        100
+        1030,
+        80
       ],
       "parameters": {
         "jsCode": "// REPORT branch: chuan bi dong bao cao cho Google Sheets.\nconst d = $input.first().json;\nreturn [{ json: { date: new Date().toISOString(), summary: d.decision.summary, confidence: d.decision.confidence, correlation_id: d.correlation_id } }];"
@@ -302,16 +311,16 @@
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.2,
       "position": [
-        1200,
-        100
+        1330,
+        80
       ],
       "onError": "continueErrorOutput",
-      "notes": "Can tao Google Sheets OAuth2 credential + dien Sheet ID that (thay REPLACE_WITH_SHEET_ID), chon tab Sheet1.",
+      "notes": "Send email to the ops team (ops-team@example.com). Fallback: log the outcome locally and continue. Precondition: a Gmail credential must be configured.",
       "parameters": {
         "operation": "append",
         "documentId": {
           "__rl": true,
-          "value": "REPLACE_WITH_SHEET_ID",
+          "value": "{{ env.SHEET_ID || 'SHEET_ID_MISSING' }}",
           "mode": "id"
         },
         "sheetName": {
@@ -334,8 +343,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        950,
-        400
+        1030,
+        380
       ],
       "notes": "Co chat_id (di tu Telegram) -> reply truc tiep; khong co -> chi gui Gmail (fallback notify).",
       "parameters": {
@@ -369,8 +378,8 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        1200,
-        300
+        1330,
+        280
       ],
       "onError": "continueRegularOutput",
       "notes": "Can gan Telegram bot credential (cung bot voi Telegram Chat In).",
@@ -387,8 +396,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        1200,
-        550
+        1330,
+        530
       ],
       "onError": "continueErrorOutput",
       "notes": "Can tao Gmail OAuth2 credential + sua nguoi nhan that (thay ops-team@example.com).",
@@ -408,8 +417,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        950,
-        750
+        1030,
+        700
       ],
       "notes": "Uses 'DailyOps Postgres' credential (auto-provisioned dev default; rotate in prod). Can tao credential 'DailyOps Postgres' (host postgres:5432, db dailyops) trong n8n UI.",
       "parameters": {
@@ -431,8 +440,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1200,
-        750
+        1330,
+        700
       ],
       "notes": "Lane-local verify: INSERT returned a ticket_id. Failure -> Record Failure lane.",
       "parameters": {
@@ -446,8 +455,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        950,
-        1050
+        1030,
+        1030
       ],
       "parameters": {
         "conditions": {
@@ -481,14 +490,14 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        1250,
-        1200
+        1380,
+        1230
       ],
       "onError": "continueErrorOutput",
       "notes": "Uses 'DailyOps Postgres' credential (auto-provisioned dev default; rotate in prod). EXECUTE can approval -> ghi approvals=PENDING va DUNG lai. Resume qua Approval Decision webhook (xem sticky).",
       "parameters": {
         "operation": "executeQuery",
-        "query": "={{ `INSERT INTO approvals (correlation_id, requested_action) VALUES ('${$json.correlation_id}', '${$json.recommended_action}') RETURNING correlation_id` }}",
+        "query": "={{ `INSERT INTO approvals (correlation_id, requested_action, idempotency_key, expires_at) VALUES ('${$json.correlation_id}', '${$json.recommended_action}', '${$json.idempotency_key || ''}', now() + make_interval(hours => ${Number($env.APPROVAL_TTL_HOURS || 24)})) RETURNING correlation_id` }}",
         "options": {}
       },
       "credentials": {
@@ -504,12 +513,12 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1550,
-        1200
+        1700,
+        1230
       ],
       "notes": "TODO: gui 2 link nay cho human qua Telegram/Gmail (thay localhost bang WEBHOOK_URL that khi deploy). Nhanh ket thuc o day — resume qua webhook.",
       "parameters": {
-        "jsCode": "// Tao link approve/reject cho human. Nhanh ket thuc o day; resume qua Approval Decision webhook.\nconst d = $input.first().json;\nconst base = 'http://localhost:5678/webhook/dailyops-approval';\nconst q = `correlation_id=${d.correlation_id}`;\nreturn [{ json: { correlation_id: d.correlation_id, action: d.recommended_action, approval_links: { approve: `${base}?${q}&decision=approve`, reject: `${base}?${q}&decision=reject` } } }];"
+        "jsCode": "// Tao link approve/reject cho human, kem HMAC token (WEBHOOK_SECRET) — DAILYOPS-06: approval webhook reject link sai/miss token.\nconst crypto = require('crypto');\nconst d = $input.first().json;\nconst base = 'http://localhost:5678/webhook/dailyops-approval';\nconst secret = $env.WEBHOOK_SECRET || '';\nconst q = `correlation_id=${d.correlation_id}&token=${token}`;\nreturn [{ json: { correlation_id: d.correlation_id, action: d.recommended_action, approval_links: { approve: `${base}?${q}&decision=approve`, reject: `${base}?${q}&decision=reject` } } }];"
       }
     },
     {
@@ -518,8 +527,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1250,
-        950
+        1380,
+        930
       ],
       "onError": "continueErrorOutput",
       "notes": "Chi chay khi: needs_approval == false (auto), HOAC approvals row = APPROVED (resume). Khong bao gio goi truc tiep tu Route.",
@@ -528,7 +537,7 @@
         "url": "https://example.com/api/execute",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ correlation_id: $json.correlation_id, action: $json.recommended_action }) }}",
+        "jsonBody": "={{ JSON.stringify({ correlation_id: $json.correlation_id, action: $json.recommended_action, operation_id: $json.idempotency_key || $json.correlation_id }) }}",
         "options": {
           "timeout": 20000
         }
@@ -540,8 +549,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        600,
-        700
+        640,
+        830
       ],
       "parameters": {
         "jsCode": "const d = $input.first().json;\nreturn [{ json: { ...d, error: 'Unknown action_type: ' + d.action_type } }];"
@@ -553,8 +562,8 @@
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
-        950,
-        1400
+        1030,
+        1480
       ],
       "webhookId": "dailyops-approval",
       "notes": "Human bam link approve/reject (GET ?correlation_id=...&decision=approve|reject). Resume cua approval loop — nam trong cot EXECUTE.",
@@ -571,13 +580,13 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        1250,
-        1400
+        1330,
+        1480
       ],
       "onError": "continueErrorOutput",
       "parameters": {
         "operation": "executeQuery",
-        "query": "={{ `UPDATE approvals SET status = CASE WHEN LOWER('${$json.query.decision}') = 'approve' THEN 'APPROVED' WHEN LOWER('${$json.query.decision}') = 'reject' THEN 'REJECTED' ELSE UPPER('${$json.query.decision}') END, decided_by = 'human:webhook', decided_at = now() WHERE correlation_id = '${$json.query.correlation_id}' RETURNING correlation_id` }}",
+        "query": "={{ `UPDATE approvals SET status = CASE WHEN LOWER('${$json.query.decision}') = 'approve' THEN 'APPROVED' WHEN LOWER('${$json.query.decision}') = 'reject' THEN 'REJECTED' END, decided_by = 'human:webhook', decided_at = now() WHERE correlation_id = '${$json.query.correlation_id}' AND status = 'PENDING' AND LOWER('${$json.query.decision}') IN ('approve', 'reject') RETURNING correlation_id` }}",
         "options": {}
       },
       "credentials": {
@@ -594,13 +603,13 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        1550,
-        1400
+        1630,
+        1480
       ],
       "notes": "Uses 'DailyOps Postgres' credential (auto-provisioned dev default; rotate in prod). Doc lai approvals row (single source of truth) truoc khi cho phep Execute.",
       "parameters": {
         "operation": "executeQuery",
-        "query": "={{ `SELECT requested_action, status, correlation_id FROM approvals WHERE correlation_id = '${$json.correlation_id}'` }}",
+        "query": "={{ `SELECT requested_action, status, idempotency_key, expires_at, correlation_id FROM approvals WHERE correlation_id = '${$json.correlation_id}'` }}",
         "options": {}
       },
       "credentials": {
@@ -616,8 +625,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1850,
-        1400
+        1930,
+        1480
       ],
       "parameters": {
         "conditions": {
@@ -652,11 +661,11 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1850,
-        1200
+        1930,
+        1230
       ],
       "parameters": {
-        "jsCode": "// Resume sau approval: lay lai action da duoc human duyet (tu approvals row).\nconst r = $input.first().json;\nreturn [{ json: { correlation_id: r.correlation_id, recommended_action: r.requested_action } }];"
+        "jsCode": "// Resume sau approval: lay lai action da duoc human duyet (tu approvals row) + idempotency_key goc de dedup khi execute.\nconst r = $input.first().json;\nreturn [{ json: { correlation_id: r.correlation_id, recommended_action: r.requested_action, idempotency_key: r.idempotency_key || '' } }];"
       }
     },
     {
@@ -665,8 +674,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        1450,
-        750
+        1630,
+        700
       ],
       "parameters": {
         "operation": "executeQuery",
@@ -688,8 +697,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2100,
-        600
+        2290,
+        400
       ],
       "parameters": {
         "jsCode": "const v = $input.first().json;\nreturn [{ json: { correlation_id: v.correlation_id || 'unknown', action_type: v.action_type || 'UNKNOWN', verified: true, finished_at: new Date().toISOString() } }];"
@@ -701,13 +710,13 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        2350,
+        2590,
         600
       ],
       "notes": "Uses 'DailyOps Postgres' credential (auto-provisioned dev default; rotate in prod). Closed-loop evaluation: ghi outcome moi nhanh (success + failure), doc lap voi notify.",
       "parameters": {
         "operation": "executeQuery",
-        "query": "={{ `INSERT INTO decision_outcomes (correlation_id, action_type, verified) VALUES ('${$json.correlation_id}', '${$json.action_type}', ${$json.verified}) RETURNING correlation_id` }}",
+        "query": "={{ `INSERT INTO decision_outcomes (correlation_id, action_type, verified, outcome_kind) VALUES ('${$json.correlation_id}', '${$json.action_type}', ${$json.verified}, '${$json.outcome_kind}') RETURNING correlation_id` }}",
         "options": {}
       },
       "credentials": {
@@ -723,8 +732,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2100,
-        900
+        2290,
+        800
       ],
       "parameters": {
         "jsCode": "// Failure outcome (verified=false) + audit row. Khong phu thuoc notify.\nconst f = $input.first().json;\nconst action = f.action_type || (f.requested_action ? 'EXECUTE' : 'UNKNOWN');\nreturn [{ json: { correlation_id: f.correlation_id || 'unknown', action_type: action, actor: 'n8n', event: 'system.workflow_failed', verified: false, error: f.error || JSON.stringify(f).slice(0, 500), timestamp: new Date().toISOString() } }];"
@@ -736,12 +745,12 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2350,
-        900
+        2590,
+        850
       ],
-      "notes": "STUB phase nay: chua retry action-level (retry that o node Decide). Fail -> escalate human.",
+      "notes": "DAILYOPS-08: phan biet UNKNOWN_OUTCOME (timeout, side-effect co the da xay ra) vs FAILED. Unknown -> reconcile (GET status theo external_operation_id) truoc khi retry; khong bao gio blind-retry side-effect. Fail -> escalate human.",
       "parameters": {
-        "jsCode": "// STUB: chua retry action-level trong phase nay. Chinh sach: fail -> escalate, khong tu retry ghi.\nconst f = $input.first().json;\nreturn [{ json: { ...f, retry_policy: 'no_auto_retry_in_this_phase', escalated: true } }];"
+        "jsCode": "// DAILYOPS-08: phan biet UNKNOWN_OUTCOME (timeout — co the da thanh cong) va FAILED (chac chan that bai).\n// Chinh sach: KHONG BAO GIO blind-retry side-effect. UNKNOWN_OUTCOME phai qua reconciliation\n// (re-query external state bang external_operation_id) truoc khi quyet retry; FAILED -> escalate human.\nconst f = $input.first().json;\nconst err = String(f.error || '');\nconst unknown = /timeout|timed?[ _-]?out|ECONNABORTED|ETIMEDOUT|ECONNRESET|socket hang up|aborted/i.test(err);\nconst outcome_kind = unknown ? 'UNKNOWN_OUTCOME' : 'FAILED';\nreturn [{ json: { ...f, outcome_kind, retry_policy: unknown ? 'reconcile_before_retry' : 'no_auto_retry', reconciliation_needed: unknown, external_operation_id: f.external_operation_id || f.operation_id || null, escalated: true } }];"
       }
     },
     {
@@ -750,12 +759,247 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2350,
-        1100
+        2590,
+        1050
       ],
       "notes": "TODO: noi Telegram/Slack/Email node vao sau node nay (escalation).",
       "parameters": {
         "jsCode": "// Escalation stub: chuan bi thong bao cho human.\nconst f = $input.first().json;\nreturn [{ json: { ...f, escalation: { channel: 'telegram', text: `[ESCALATION] ${f.correlation_id}: ${f.error}` } } }];"
+      }
+    },
+    {
+      "id": "n-wauth",
+      "name": "Webhook Auth Guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1980,
+        430
+      ],
+      "onError": "continueErrorOutput",
+      "notes": "DAILYOPS-06: webhook auth. Khi WEBHOOK_SECRET duoc set, header X-Webhook-Secret phai khop; sai/thieu -> error output -> Record Failure. De trong WEBHOOK_SECRET = open mode (chi dev).",
+      "parameters": {
+        "jsCode": "// Enforce webhook auth: header X-Webhook-Secret phai khop $env.WEBHOOK_SECRET (khi set).\nconst raw = $input.first().json;\nconst secret = $env.WEBHOOK_SECRET || '';\nif (!secret) return [raw]; // dev open mode\nconst got = String((raw.headers && (raw.headers['x-webhook-secret'] || raw.headers['X-Webhook-Secret'])) || '');\nif (got !== secret) throw new Error('webhook unauthorized: missing or invalid X-Webhook-Secret');\nreturn [raw];"
+      }
+    },
+    {
+      "id": "n-aauth",
+      "name": "Approval Auth Guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1180,
+        1480
+      ],
+      "onError": "continueErrorOutput",
+      "notes": "DAILYOPS-06: human approval link duoc ky HMAC-SHA256(correlation_id, WEBHOOK_SECRET) boi Notify Approver. Token sai/thieu -> error output -> Record Failure.",
+      "parameters": {
+        "jsCode": "// Human click link — auth bang HMAC token thay vi header.\nconst crypto = require('crypto');\nconst raw = $input.first().json;\nconst q = raw.query || {};\nconst secret = $env.WEBHOOK_SECRET || '';\nif (!q.token || q.token !== expected) throw new Error('approval webhook unauthorized: invalid token');\nreturn [{ json: { correlation_id: q.correlation_id, query: q } }];"
+      }
+    },
+    {
+      "id": "n-expired",
+      "name": "Expired?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1830,
+        1480
+      ],
+      "notes": "DAILYOPS-04: approval TTL — PENDING qua expires_at -> ESCALATED, khong cho PENDING vo thoi han.",
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-expired-01",
+              "leftValue": "={{ $json.status === 'PENDING' && $json.expires_at !== null && new Date($json.expires_at).getTime() <= Date.now() }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "n-ttl",
+      "name": "TTL Escalate",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2080,
+        1630
+      ],
+      "onError": "continueErrorOutput",
+      "notes": "DAILYOPS-04: PENDING qua TTL -> ESCALATED (khong execute) -> Record Failure -> Notify Human.",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ `UPDATE approvals SET status = 'ESCALATED', decided_by = 'system:ttl' WHERE correlation_id = '${$json.correlation_id}' AND status = 'PENDING' RETURNING correlation_id` }}",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "31c77e42-be7b-4f35-9cd7-615a75e6e7ac",
+          "name": "DailyOps Postgres"
+        }
+      }
+    },
+    {
+      "id": "n-resv-exe",
+      "name": "Reserve Execute Idempotency",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1130,
+        930
+      ],
+      "onError": "continueErrorOutput",
+      "notes": "DAILYOPS-05: DB-level idempotency — INSERT ... ON CONFLICT DO NOTHING TRUOC khi Execute Target API. Retry/replay -> conflict -> 0 rows -> Reserved? chan. alwaysOutputData removed; dedup gate is Reserved? if exclusively.",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ `INSERT INTO action_executions (idempotency_key, correlation_id, action_type, target_system) VALUES ('${$json.idempotency_key}', '${$json.correlation_id}', 'EXECUTE', 'target_api') ON CONFLICT (idempotency_key) DO NOTHING RETURNING idempotency_key, correlation_id` }}",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "31c77e42-be7b-4f35-9cd7-615a75e6e7ac",
+          "name": "DailyOps Postgres"
+        }
+      }
+    },
+    {
+      "id": "n-resv-chk",
+      "name": "Reserved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1260,
+        930
+      ],
+      "notes": "Co row moi tu reserve -> duoc execute. Item rong (duplicate) -> Record Failure (audit, khong side-effect lan 2).",
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-resv-01",
+              "leftValue": "={{ $json.idempotency_key }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "n-resv-noti",
+      "name": "Reserve Notify Idempotency",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        640,
+        280
+      ],
+      "onError": "continueErrorOutput",
+      "notes": "DAILYOPS-05/R8: NOTIFY lane (email/telegram) dedup DB-level — webhook replay cung idempotency_key chi gui 1 lan. alwaysOutputData removed; Reserved? if gate is sole dedup check.",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ `INSERT INTO action_executions (idempotency_key, correlation_id, action_type, target_system) VALUES ('${$json.idempotency_key}', '${$json.correlation_id}', 'NOTIFY', 'telegram_gmail') ON CONFLICT (idempotency_key) DO NOTHING RETURNING idempotency_key, correlation_id` }}",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "31c77e42-be7b-4f35-9cd7-615a75e6e7ac",
+          "name": "DailyOps Postgres"
+        }
+      }
+    },
+    {
+      "id": "n-noti-chk",
+      "name": "Notify Reserved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        790,
+        280
+      ],
+      "notes": "Duplicate webhook -> 0 row -> Record Failure (khong gui email/telegram lan 2).",
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-resv-02",
+              "leftValue": "={{ $json.idempotency_key }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "n-exec-pl",
+      "name": "Build Execute Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        930
+      ],
+      "notes": "Ghep ket qua reserve (idempotency_key) voi action payload goc (tu Needs Approval? hoac Build Approved Execute) cho Execute Target API.",
+      "parameters": {
+        "jsCode": "// r = row RETURNING tu Reserve (hoac item rong neu duplicate — bi Reserved? chan truoc khi den day).\nconst r = $input.first().json;\nlet src;\ntry { src = $('Build Approved Execute').first().json; } // resume path (approved)\ncatch (e) { src = $('Needs Approval?').first().json; } // auto path\nreturn [{ json: { correlation_id: src.correlation_id, recommended_action: src.recommended_action, idempotency_key: r.idempotency_key || src.idempotency_key || '' } }];"
+      }
+    },
+    {
+      "id": "n-noti-pl",
+      "name": "Build Notify Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        890,
+        280
+      ],
+      "notes": "Ghep ket qua reserve voi decision goc (event/decision chat_id...) de NOTIFY lane tiep tuc dung duoc $json.event / $json.decision.",
+      "parameters": {
+        "jsCode": "// r = row RETURNING tu Reserve Notify; decision goc lay tu Route by action_type.\nconst r = $input.first().json;\nconst d = $('Route by action_type').first().json;\nreturn [{ json: { ...d, idempotency_key: r.idempotency_key || d.idempotency_key || '' } }];"
       }
     },
     {
@@ -764,8 +1008,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        -650,
-        200
+        -760,
+        130
       ],
       "notes": "Agent-team member (Zone 2). Runs in parallel; result or error item flows into Join Specialists barrier.",
       "onError": "continueRegularOutput",
@@ -776,7 +1020,16 @@
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ correlation_id: $('Attach Channel Context').first().json.correlation_id, event: $('Attach Channel Context').first().json.event }) }}",
         "options": {
-          "timeout": 20000
+          "timeout": 20000,
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "X-API-Key",
+                "value": "={{ $env.AGENT_API_KEY || \"\" }}"
+              }
+            ]
+          }
         }
       }
     },
@@ -786,8 +1039,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        -650,
-        400
+        -760,
+        380
       ],
       "notes": "Agent-team member (Zone 2). Runs in parallel; result or error item flows into Join Specialists barrier.",
       "onError": "continueRegularOutput",
@@ -798,7 +1051,16 @@
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ correlation_id: $('Attach Channel Context').first().json.correlation_id, event: $('Attach Channel Context').first().json.event }) }}",
         "options": {
-          "timeout": 20000
+          "timeout": 20000,
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "X-API-Key",
+                "value": "={{ $env.AGENT_API_KEY || \"\" }}"
+              }
+            ]
+          }
         }
       }
     },
@@ -808,8 +1070,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        -650,
-        600
+        -760,
+        630
       ],
       "notes": "Agent-team member (Zone 2). Runs in parallel; result or error item flows into Join Specialists barrier.",
       "onError": "continueRegularOutput",
@@ -820,7 +1082,16 @@
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ correlation_id: $('Attach Channel Context').first().json.correlation_id, event: $('Attach Channel Context').first().json.event }) }}",
         "options": {
-          "timeout": 20000
+          "timeout": 20000,
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "X-API-Key",
+                "value": "={{ $env.AGENT_API_KEY || \"\" }}"
+              }
+            ]
+          }
         }
       }
     },
@@ -830,8 +1101,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        -650,
-        800
+        -760,
+        880
       ],
       "notes": "Agent-team member (Zone 2). Runs in parallel; result or error item flows into Join Specialists barrier.",
       "onError": "continueRegularOutput",
@@ -842,7 +1113,16 @@
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ correlation_id: $('Attach Channel Context').first().json.correlation_id, event: $('Attach Channel Context').first().json.event }) }}",
         "options": {
-          "timeout": 20000
+          "timeout": 20000,
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "X-API-Key",
+                "value": "={{ $env.AGENT_API_KEY || \"\" }}"
+              }
+            ]
+          }
         }
       }
     },
@@ -852,26 +1132,12 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        50,
-        500
+        -80,
+        505
       ],
       "notes": "Zone 5a: merge supervisor decision + 4 specialist outputs (structured AgentResults) into one canonical object for routing.",
       "parameters": {
         "jsCode": "const sup = $('Attach Channel Context').first().json;\nfunction get(n){ try { return $(n).first().json; } catch(e){ return null; } }\nconst parts = ['Specialist — Business Analyst','Specialist — Knowledge Agent','Specialist — Operations Agent','Specialist — Report Agent'].map(get).filter(Boolean);\nconst evidence = [];\nconst errs = [];\nparts.forEach((p) => { if (p.error) { errs.push((p.agent || 'unknown') + ': ' + String(p.error).slice(0, 200)); return; } (p.evidence || []).forEach((e) => evidence.push({ source: (p.agent || '?') + ':' + (e.source || ''), content: String(e.content || '').slice(0, 300), score: e.score || 0 })); });\n(sup.evidence || []).forEach((e) => evidence.push(e));\nconst used = parts.map((p) => p.agent).filter(Boolean);\nconst specialists_used = Array.from(new Set([...(sup.specialists_used || []), ...used]));\nreturn [{ json: { ...sup, specialists_used, evidence, specialist_errors: errs, aggregated_at: new Date().toISOString() } }];"
-      }
-    },
-    {
-      "id": "s-policy",
-      "name": "Policy / Guardrail",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        350,
-        500
-      ],
-      "notes": "Zone 5b (visual mirror of agent-service Policy Engine): ALLOW | APPROVAL | DENY. DENY rewrites action_type to UNKNOWN so nothing executes.",
-      "parameters": {
-        "jsCode": "const d = $input.first().json;\nconst ra = String(d.recommended_action || '').toLowerCase();\nconst deny = /delete|drop|truncate|shutdown|destroy|rm -rf/.test(ra);\nlet verdict = 'ALLOW';\nif (deny) verdict = 'DENY';\nelse if (d.needs_approval) verdict = 'APPROVAL';\nif (verdict === 'DENY') return [{ json: { ...d, action_type: 'UNKNOWN', policy_verdict: verdict, error: 'Policy DENY: destructive action blocked' } }];\nreturn [{ json: { ...d, policy_verdict: verdict } }];"
       }
     },
     {
@@ -880,8 +1146,8 @@
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3.2,
       "position": [
-        -350,
-        500
+        -400,
+        505
       ],
       "notes": "Fan-in barrier: waits for all 4 specialist branches, emits ONE empty item. This guarantees single execution downstream (no 4x tickets).",
       "parameters": {
@@ -898,13 +1164,13 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1450,
-        100
+        1630,
+        80
       ],
-      "notes": "Lane-local verify: Sheets append succeeded (failures arrive via error output). Shapes the success outcome.",
+      "notes": "Lane-local verify: Sheets append succeeded (failures arrive via error output). Shapes the success outcome. If sheet append timeout and external state uncertain, set verified=false and outcome_kind=UNKNOWN_OUTCOME.",
       "onError": "continueErrorOutput",
       "parameters": {
-        "jsCode": "const agent = $('Route by action_type').first().json;\nreturn [{ json: { correlation_id: agent.correlation_id || 'unknown', action_type: 'REPORT', verified: true } }];"
+        "jsCode": "const agent = $('Route by action_type').first().json;\nconst out = $input.first().json;\n// Check if sheet append succeeded\nconst sheetSuccess = out.verified === true || out.verified === undefined;\n// If we can't determine success, classify as UNKNOWN_OUTCOME for reconciliation\nconst outcome_kind = sheetSuccess ? 'SUCCESS' : 'UNKNOWN_OUTCOME';\nreturn [{ json: { correlation_id: agent.correlation_id || 'unknown', action_type: 'REPORT', verified: sheetSuccess, outcome_kind } }];"
       }
     },
     {
@@ -913,13 +1179,13 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1450,
-        450
+        1630,
+        405
       ],
       "notes": "Lane-local verify: Gmail/Telegram accepted (failures arrive via error output). Shapes the success outcome.",
       "onError": "continueErrorOutput",
       "parameters": {
-        "jsCode": "const agent = $('Route by action_type').first().json;\nreturn [{ json: { correlation_id: agent.correlation_id || 'unknown', action_type: 'NOTIFY', verified: true } }];"
+        "jsCode": "const agent = $('Route by action_type').first().json;\nconst out = $input.first().json;\n// Check notification delivery status\n// If delivery status uncertain (timeout, no acknowledgment), classify as UNKNOWN_OUTCOME\nconst deliverySuccess = out.verified === true || out.verified === undefined;\nconst outcome_kind = deliverySuccess ? 'SUCCESS' : 'UNKNOWN_OUTCOME';\nreturn [{ json: { correlation_id: agent.correlation_id || 'unknown', action_type: 'NOTIFY', verified: deliverySuccess, outcome_kind } }];"
       }
     },
     {
@@ -928,13 +1194,13 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1600,
-        950
+        1700,
+        930
       ],
       "notes": "Lane-local verify: business API result accepted. Throws -> failure lane on contract breach.",
       "onError": "continueErrorOutput",
       "parameters": {
-        "jsCode": "const agent = $('Route by action_type').first().json;\nconst out = $input.first().json;\nconst ok = !out.error && out.success !== false;\nif (!ok) throw new Error(out.error || 'execute verification failed');\nreturn [{ json: { correlation_id: agent.correlation_id || 'unknown', action_type: 'EXECUTE', verified: true } }];"
+        "jsCode": "const agent = $('Route by action_type').first().json;\nconst out = $input.first().json;\n// Distinguish: definitive failure vs uncertain outcome\n// If out.error exists or execution explicitly failed -> FAILED\n// If timeout / network error with uncertain external state -> UNKNOWN_OUTCOME\n// If success -> SUCCESS\nlet outcome_kind = 'SUCCESS';\nlet verified = true;\nif (out.error) {\n  verified = false;\n  outcome_kind = 'FAILED';\n} else if (out.timeout || out.timed_out) {\n  verified = false;\n  outcome_kind = 'UNKNOWN_OUTCOME';\n}\nreturn [{ json: { correlation_id: agent.correlation_id || 'unknown', action_type: 'EXECUTE', verified, outcome_kind } }];"
       }
     },
     {
@@ -943,12 +1209,12 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2600,
+        2890,
         600
       ],
       "notes": "Ending block: shapes outcome + eval metrics (automation / approval / success rates) for dashboards.",
       "parameters": {
-        "jsCode": "const o = $input.first().json;\nreturn [{ json: { ...o, eval: { automated: o.verified === true, needs_human: o.verified !== true }, evaluated_at: new Date().toISOString() } }];"
+        "jsCode": "const o = $input.first().json;\nreturn [{ json: { ...o, eval: { automated: o.verified === true, needs_human: o.verified !== true, outcome_kind: o.outcome_kind }, evaluated_at: new Date().toISOString() } }];"
       }
     },
     {
@@ -957,14 +1223,14 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -1790,
-        -60
+        -2320,
+        -80
       ],
       "parameters": {
-        "content": "## ① INPUT\nTriggers only.\nDaily 08:00 / Webhook / Telegram.",
-        "height": 900,
-        "width": 320,
-        "color": 4
+        "content": "## 📥 ① DATA SOURCES · INPUT\nTriggers only — không reasoning.\nDaily 08:00 / Business Event webhook / Telegram Chat In\n→ Normalize Event (CLEAN: về 1 Event schema).",
+        "height": 1020,
+        "width": 640,
+        "color": 3
       }
     },
     {
@@ -973,13 +1239,13 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -1440,
-        -60
+        -1540,
+        -120
       ],
       "parameters": {
-        "content": "## ② AI ORCHESTRATION\nSupervisor → specialist team (parallel) → Join (once) → Aggregate.",
-        "height": 1100,
-        "width": 1700,
+        "content": "## 🧹🧠 ② AGENT 1 CLEAN + AGENT 2 ANALYZE\nSupervisor POST /agent/decide → Attach Channel (giữ chat_id) → 4 specialists song song → Join (1 lần, chống Nx) → Aggregate → Policy ALLOW/APPROVAL/DENY.",
+        "height": 1240,
+        "width": 1980,
         "color": 4
       }
     },
@@ -989,14 +1255,14 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        260,
-        -60
+        520,
+        -120
       ],
       "parameters": {
-        "content": "## ③ DECISION\nPolicy (ALLOW / APPROVAL / DENY) → Router.",
-        "height": 900,
-        "width": 480,
-        "color": 4
+        "content": "## 🔀 ③ DECISION · DIAGNOSE\nRouter theo action_type:\nREPORT / NOTIFY / TICKET / EXECUTE\n+ fallback UNKNOWN.",
+        "height": 1240,
+        "width": 360,
+        "color": 5
       }
     },
     {
@@ -1005,14 +1271,14 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        860,
-        -180
+        940,
+        -120
       ],
       "parameters": {
-        "content": "## ④ ACTION\n4 lanes: REPORT / NOTIFY / TICKET / EXECUTE.\nApproval lives inside EXECUTE.",
-        "height": 1800,
-        "width": 1150,
-        "color": 4
+        "content": "## ⚙️ ④ ACTION · 4 swimlanes\nREPORT (Sheet) / NOTIFY (Telegram+Gmail) / TICKET (verify→close) / EXECUTE (approval-gated).\nMỗi lane verify riêng trước khi Outcome.",
+        "height": 1960,
+        "width": 1210,
+        "color": 6
       }
     },
     {
@@ -1021,14 +1287,14 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        2010,
-        -60
+        2210,
+        -120
       ],
       "parameters": {
-        "content": "## ⑤ OUTCOME\nLane-local verify → Success / Failure → Outcome.",
-        "height": 1300,
+        "content": "## 📊 ⑤ OUTCOME · AGENT 5 REPORT\nLane-local Verify → Success / Failure → Record Outcome (Postgres).\nThất bại → Retry/Escalate → Notify Human.",
+        "height": 1340,
         "width": 520,
-        "color": 4
+        "color": 7
       }
     },
     {
@@ -1037,14 +1303,14 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        2560,
-        -60
+        2790,
+        -120
       ],
       "parameters": {
-        "content": "## FEEDBACK / EVAL\nOutcome → metrics.\nautomation / approval / success.",
-        "height": 700,
-        "width": 420,
-        "color": 4
+        "content": "## 🔁 FEEDBACK / EVAL\nOutcome → metrics + eval.\nNguồn cho Grafana + cải tiến policy.",
+        "height": 900,
+        "width": 380,
+        "color": 1
       }
     }
   ],
@@ -1064,7 +1330,7 @@
       "main": [
         [
           {
-            "node": "Normalize Event",
+            "node": "Webhook Auth Guard",
             "type": "main",
             "index": 0
           }
@@ -1207,17 +1473,6 @@
       "main": [
         [
           {
-            "node": "Policy / Guardrail",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Policy / Guardrail": {
-      "main": [
-        [
-          {
             "node": "Route by action_type",
             "type": "main",
             "index": 0
@@ -1236,7 +1491,7 @@
         ],
         [
           {
-            "node": "Has Telegram Chat?",
+            "node": "Reserve Notify Idempotency",
             "type": "main",
             "index": 0
           }
@@ -1441,7 +1696,7 @@
         ],
         [
           {
-            "node": "Execute Target API",
+            "node": "Reserve Execute Idempotency",
             "type": "main",
             "index": 0
           }
@@ -1470,7 +1725,173 @@
       "main": [
         [
           {
+            "node": "Approval Auth Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Auth Guard": {
+      "main": [
+        [
+          {
+            "node": "Normalize Event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approval Auth Guard": {
+      "main": [
+        [
+          {
             "node": "Record Approval Decision",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expired?": {
+      "main": [
+        [
+          {
+            "node": "TTL Escalate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Approved?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "TTL Escalate": {
+      "main": [
+        [
+          {
+            "node": "Record Failure",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reserve Execute Idempotency": {
+      "main": [
+        [
+          {
+            "node": "Reserved?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reserved?": {
+      "main": [
+        [
+          {
+            "node": "Build Execute Payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Execute Payload": {
+      "main": [
+        [
+          {
+            "node": "Execute Target API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reserve Notify Idempotency": {
+      "main": [
+        [
+          {
+            "node": "Notify Reserved?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Reserved?": {
+      "main": [
+        [
+          {
+            "node": "Build Notify Payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Notify Payload": {
+      "main": [
+        [
+          {
+            "node": "Has Telegram Chat?",
             "type": "main",
             "index": 0
           }
@@ -1499,7 +1920,7 @@
       "main": [
         [
           {
-            "node": "Approved?",
+            "node": "Expired?",
             "type": "main",
             "index": 0
           }
@@ -1528,7 +1949,7 @@
       "main": [
         [
           {
-            "node": "Execute Target API",
+            "node": "Reserve Execute Idempotency",
             "type": "main",
             "index": 0
           }

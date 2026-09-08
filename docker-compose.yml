@@ -2,6 +2,7 @@ name: dailyops
 
 x-n8n-env: &n8n-env
   N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-dailyops-dev-encryption-key-change-me}
+  N8N_DEPLOY_ENV: ${N8N_DEPLOY_ENV:-dev}
   GENERIC_TIMEZONE: UTC
   N8N_DIAGNOSTICS_ENABLED: "false"
   N8N_RUNNERS_ENABLED: "true"
@@ -16,6 +17,16 @@ x-n8n-env: &n8n-env
   CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
   CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
   CLOUDFLARE_MODEL: ${CLOUDFLARE_MODEL:-@cf/meta/llama-3.1-8b-instruct}
+  # Auth between n8n and agent-service (leave empty = open dev mode)
+  AGENT_API_KEY: ${AGENT_API_KEY:-}
+  AGENT_SERVICE_ENV: ${AGENT_SERVICE_ENV:-dev}
+  # Webhook auth (DAILYOPS-06): X-Webhook-Secret header on Business Event webhook
+  # + HMAC token on human approval links. Empty = open dev mode.
+  WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
+  # Approval TTL hours (DAILYOPS-04): PENDING approvals expire -> ESCALATED
+  APPROVAL_TTL_HOURS: ${APPROVAL_TTL_HOURS:-24}
+  # Allow `require('crypto')` in n8n Code nodes (approval HMAC token signing)
+  NODE_FUNCTION_ALLOW_BUILTIN: "crypto"
 
 services:
   # ------------------------------------------------------- source of truth
@@ -37,6 +48,24 @@ services:
       timeout: 3s
       retries: 12
 
+  # -------------------------------------------------------------- db-init
+  # OPS-1: applies db/schema.sql + all migrations (idempotent) to the running
+  # postgres before any app connects. Safe for both fresh and existing DBs.
+  # Runs schema.sql here (not only via the postgres entrypoint) so existing
+  # volumes get the same schema evolution as fresh ones.
+  db-init:
+    image: postgres:16-alpine
+    container_name: dailyops-db-init
+    entrypoint: ["/bin/sh", "/db/migrate.sh", "-U", "dailyops", "-d", "dailyops", "-h", "postgres"]
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-dailyops}
+    volumes:
+      - ./db:/db:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   # ------------------------------------------------- agent-service (brain)
   # Reasoning only: RAG + read-only tools + LLM + Policy Engine.
   # Exposes POST /agent/decide. Never writes to target systems.
@@ -46,6 +75,7 @@ services:
     environment:
       DATABASE_URL: postgres://dailyops:dailyops@postgres:5432/dailyops
       POLICY_FILE: /app/src/guardrails/policies.yaml
+      AGENT_API_KEY: ${AGENT_API_KEY:-}
       CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
       CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
       CLOUDFLARE_MODEL: ${CLOUDFLARE_MODEL:-@cf/meta/llama-3.1-8b-instruct}
@@ -54,6 +84,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 10s
@@ -90,6 +122,8 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
       agent-service:
         condition: service_healthy
     healthcheck:

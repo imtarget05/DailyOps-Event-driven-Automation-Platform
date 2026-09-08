@@ -5,9 +5,10 @@ Quy tắc merge canvas: **không còn node warning credential mới được coi
 
 ## Bắt buộc cho luồng chính chạy local
 
-- [x] **DailyOps Postgres** (7 node: Record Decision, Create/Close Ticket, Request/Record/Load Approval, Record Outcome)
+- [x] **DailyOps Postgres** (7 node + Reserve/Idempotency nodes: Record Decision, Create/Close Ticket, Request/Record/Load Approval, Record Outcome, Reserve Execute/Notify Idempotency)
   - Auto-provisioned: `n8n/credentials/postgres.json` → `docker compose run --rm -v ./n8n/credentials:/creds:ro n8n import:credentials --input=/creds/postgres.json`
   - Host `postgres:5432`, db/user/pass `dailyops` (dev default theo `.env`; rotate khi lên prod)
+- [ ] **DAILYOPS-06 (R11) DEV/PROD credential separation**: đặt `N8N_DEPLOY_ENV=production` trong `.env` → `infra/n8n/init.sh` **fail hard** nếu credential/workflow chứa placeholder (localhost/example.com/REPLACE_WITH_/password `dailyops`). DEV/PROD credential store phải tách hoàn toàn — không reuse dev credential file lên production instance.
 - [ ] **Cloudflare Workers AI** (không phải node credential — điền `.env` rồi `docker compose up -d n8n`)
   - `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_MODEL`
   - Chưa điền → agent-service dùng mock fallback (vẫn chạy, đã có test)
