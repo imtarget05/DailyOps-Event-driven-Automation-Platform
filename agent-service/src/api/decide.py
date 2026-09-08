@@ -53,4 +53,5 @@ async def decide(req: DecideRequest) -> DecideResponse:
         action=ActionProposal(**s.get("action", {"type": "send_message", "parameters": {}})),
         failure_kind=s.get("failure_kind", "SUCCESS"),
         supervisor_latency_ms=s.get("supervisor_latency_ms", 0),
+        idempotency_key=s.get("idempotency_key", ""),
     )

@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from fastapi.testclient import TestClient
 
+from src.agents.base import AgentResult
 from src.main import app
 from src.orchestrator import supervisor as sup
 
@@ -103,6 +104,41 @@ def test_case7_parallel_execution():
         return t_par, t_seq
     t_par, t_seq = asyncio.run(go())
     assert t_par < t_seq, f"parallel {t_par:.3f}s should beat sequential {t_seq:.3f}s"
+
+
+# CASE 7b — a crashing specialist degrades to `failed`, never aborts the wave
+def test_case_crashing_specialist_is_isolated(monkeypatch):
+    async def boom(event_type, entity, payload, correlation_id):
+        raise RuntimeError("kaboom")
+    async def fine(event_type, entity, payload, correlation_id):
+        return AgentResult(agent="fine_specialist", status="completed",
+                           summary="ok", confidence=0.7)
+    monkeypatch.setattr(sup, "_RUNNERS", {"boom": boom, "fine_specialist": fine})
+    results = asyncio.run(sup.run_specialists(
+        ["boom", "fine_specialist"], "t", "e", {}, "cid_iso"))
+    by = {r.agent: r for r in results}
+    assert by["boom"].status == "failed"
+    assert "kaboom" in by["boom"].summary
+    assert by["fine_specialist"].status == "completed", \
+        "sibling specialist must still produce a result"
+
+
+# CASE 7c — a hung specialist times out, sibling results are not lost
+def test_case_slow_specialist_times_out(monkeypatch):
+    async def hang(event_type, entity, payload, correlation_id):
+        await asyncio.sleep(60)
+        return AgentResult(agent="hang", status="completed", summary="late")
+    async def quick(event_type, entity, payload, correlation_id):
+        return AgentResult(agent="quick", status="completed",
+                           summary="done", confidence=0.8)
+    monkeypatch.setattr(sup, "SPECIALIST_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(sup, "_RUNNERS", {"hang": hang, "quick": quick})
+    results = asyncio.run(sup.run_specialists(
+        ["hang", "quick"], "t", "e", {}, "cid_timeout"))
+    by = {r.agent: r for r in results}
+    assert by["hang"].status == "failed"
+    assert "timed out" in by["hang"].summary
+    assert by["quick"].status == "completed"
 
 
 # CASE 8 — telegram request -> context -> supervisor -> decision -> reply

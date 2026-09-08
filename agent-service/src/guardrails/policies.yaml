@@ -1,5 +1,10 @@
 # DailyOps v2 business policies — auto vs approval.
 # LLM may only PROPOSE. This file (deterministic rules) decides execution rights.
+# Deterministic thresholds (single source of truth for the Policy Engine).
+thresholds:
+  restock_auto_max: 500   # restock qty <= this => auto ALLOW; > => APPROVAL
+  finance_refund_auto_max: 200  # refund amount <= this => auto note; > => APPROVAL
+
 policies:
   - name: report_auto
     when: {action_type: REPORT}
@@ -24,4 +29,35 @@ policies:
     mode: approval
   - name: refund_large_approval
     when: {action_type: EXECUTE, target: refund}
+    mode: approval
+  - name: advisory_report_only
+    when: {action_type: REPORT, ticket_type: advisory}
+    mode: auto
+  - name: advisory_execute_deny
+    when: {action_type: EXECUTE, ticket_type: advisory}
+    mode: deny
+  # --- Domain expansion: CRM / Marketing / HR / Finance (deterministic gates) ---
+  - name: crm_bulk_update_approval
+    when: {action_type: EXECUTE, ticket_type: crm_bulk_update}
+    mode: approval
+  - name: crm_data_export_approval
+    when: {action_type: EXECUTE, ticket_type: crm_data_export}
+    mode: approval
+  - name: marketing_budget_spend_approval
+    when: {action_type: EXECUTE, ticket_type: marketing_spend}
+    mode: approval
+  - name: marketing_campaign_report_only
+    when: {action_type: REPORT, ticket_type: marketing_spend}
+    mode: auto
+  - name: hr_offboarding_approval
+    when: {action_type: EXECUTE, ticket_type: hr_offboarding}
+    mode: approval
+  - name: hr_employee_data_report_only
+    when: {action_type: REPORT, ticket_type: hr_employee_data}
+    mode: auto
+  - name: finance_refund_auto_note
+    when: {action_type: TICKET, ticket_type: finance_refund, refund_amount_lte: 200}
+    mode: auto
+  - name: finance_refund_approval
+    when: {action_type: EXECUTE, ticket_type: finance_refund, refund_amount_gt: 200}
     mode: approval

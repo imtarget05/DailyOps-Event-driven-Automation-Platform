@@ -18,6 +18,8 @@ class ToolSpec:
     permission: str  # auto | approval | deny
     input_schema: Dict[str, Any] = field(default_factory=dict)
     handler: Callable[..., Dict[str, Any]] | None = None
+    # DAILYOPS-01: every tool must carry one of RISK_LEVELS (4-group taxonomy).
+    risk_level: str = "EXTERNAL_SIDE_EFFECT"  # fail-safe default: highest risk
 
 
 def _ok(**kw: Any) -> Dict[str, Any]:
@@ -70,34 +72,42 @@ def search_business_policy(query: str, top_k: int = 3) -> Dict[str, Any]:
 
 TOOLS: Dict[str, ToolSpec] = {
     "get_sales_data": ToolSpec("get_sales_data", "Read sales aggregates for an entity", "READ", "auto",
-                               {"entity": "string", "window_days": "int"}, get_sales_data),
+                               {"entity": "string", "window_days": "int"}, get_sales_data,
+                               risk_level="READ"),
     "get_inventory": ToolSpec("get_inventory", "Read current inventory level", "READ", "auto",
-                              {"entity": "string"}, get_inventory),
+                              {"entity": "string"}, get_inventory, risk_level="READ"),
     "get_order_data": ToolSpec("get_order_data", "Read open/recent orders", "READ", "auto",
-                               {"entity": "string", "window_days": "int"}, get_order_data),
+                               {"entity": "string", "window_days": "int"}, get_order_data,
+                               risk_level="READ"),
     "get_marketing_metrics": ToolSpec("get_marketing_metrics", "Read ad spend/ROAS", "READ", "auto",
-                                      {"entity": "string"}, get_marketing_metrics),
+                                      {"entity": "string"}, get_marketing_metrics, risk_level="READ"),
     "search_business_policy": ToolSpec("search_business_policy", "RAG retrieval over policy/SOP docs", "READ", "auto",
-                                       {"query": "string", "top_k": "int"}, search_business_policy),
+                                       {"query": "string", "top_k": "int"}, search_business_policy,
+                                       risk_level="READ"),
     "get_customer_context": ToolSpec("get_customer_context", "Read CRM segment/context", "READ", "auto",
-                                     {"entity": "string"}, get_customer_context),
+                                     {"entity": "string"}, get_customer_context, risk_level="READ"),
     # Descriptors: proposed by agents, executed by n8n after policy gate.
     "append_google_sheet": ToolSpec("append_google_sheet", "Append a report row to Google Sheets", "OUTPUT", "auto",
-                                    {"row": "object"}),
+                                    {"row": "object"}, risk_level="LOW-RISK_WRITE"),
     "send_telegram": ToolSpec("send_telegram", "Send a Telegram message", "OUTPUT", "auto",
-                              {"chat_id": "int", "text": "string"}),
+                              {"chat_id": "int", "text": "string"}, risk_level="LOW-RISK_WRITE"),
     "send_email": ToolSpec("send_email", "Send an email notification", "OUTPUT", "auto",
-                           {"to": "string", "subject": "string", "body": "string"}),
+                           {"to": "string", "subject": "string", "body": "string"}, risk_level="LOW-RISK_WRITE"),
     "create_ticket": ToolSpec("create_ticket", "Create an ops ticket (Postgres)", "OUTPUT", "auto",
-                              {"type": "string", "priority": "string", "entity": "string"}),
+                              {"type": "string", "priority": "string", "entity": "string"},
+                              risk_level="LOW-RISK_WRITE"),
     "update_ticket": ToolSpec("update_ticket", "Update ticket status", "OUTPUT", "auto",
-                              {"ticket_id": "string", "status": "string"}),
+                              {"ticket_id": "string", "status": "string"}, risk_level="LOW-RISK_WRITE"),
     "create_restock_request": ToolSpec("create_restock_request", "Propose a restock (<=500 auto, >500 approval)", "ACTION", "approval",
-                                       {"entity": "string", "qty": "int"}),
+                                       {"entity": "string", "qty": "int"}, risk_level="HIGH-RISK_WRITE"),
     "update_campaign": ToolSpec("update_campaign", "Propose a campaign change (approval)", "ACTION", "approval",
-                                {"campaign": "string", "change": "object"}),
+                                {"campaign": "string", "change": "object"}, risk_level="HIGH-RISK_WRITE"),
     "update_crm_record": ToolSpec("update_crm_record", "Propose a CRM update (approval for sensitive)", "ACTION", "approval",
-                                  {"entity": "string", "fields": "object"}),
+                                  {"entity": "string", "fields": "object"}, risk_level="HIGH-RISK_WRITE"),
+    # EXECUTE-class: touches an external API/ERP — highest risk group.
+    "execute_action": ToolSpec("execute_action", "Execute a business action on the target API (approval-gated)",
+                               "ACTION", "approval", {"correlation_id": "string", "action": "string"},
+                               risk_level="EXTERNAL_SIDE_EFFECT"),
 }
 
 

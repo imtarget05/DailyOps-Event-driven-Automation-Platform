@@ -10,7 +10,7 @@ evidence, action, failure classification).
 from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 
-ActionType = Literal["REPORT", "NOTIFY", "TICKET", "EXECUTE"]
+ActionType = Literal["REPORT", "NOTIFY", "TICKET", "EXECUTE", "UNKNOWN"]
 FailureKind = Literal["SUCCESS", "FAILED", "RETRYABLE", "NON_RETRYABLE", "APPROVAL_REQUIRED", "DENIED"]
 
 
@@ -73,3 +73,4 @@ class DecideResponse(BaseModel):
     action: Optional[ActionProposal] = None
     failure_kind: FailureKind = "SUCCESS"
     supervisor_latency_ms: int = 0
+    idempotency_key: str = ""
