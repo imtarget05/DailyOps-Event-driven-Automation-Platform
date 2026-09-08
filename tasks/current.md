@@ -22,11 +22,11 @@
   stray `Platform/` duplicate removed; dirty tree consolidated into logical commits
   (build fix / agent-service hardening / CI strict / n8n+db / docs+harness) behind a full gate
   (114 tests, pyright 0, workflows JSON, compose config, policies.yaml).
-- **Slice C progress (ARCH-002 done; ARCH-004 done, committed)**: destructive-word detection centralized in
-  `agent-service/src/utils/security.py` and knowledge-agent tunables configurable via policies.yaml (ARCH-004/TASK-006).
-  Suite 156 pass (+8), pyright 0, ruff clean; README/spec test counts synced.
-- **Slice C remaining**: ARCH-001 (supervisor business-logic leakage), ARCH-003 (business_analyst risk thresholds 3/7d → policies),
-  ARCH-005 (advisory_council config), ARCH-007 (policy_engine EXECUTE branch → policies), then LOW-priority ARCH-008/009/010.
+- **Slice C progress (ARCH-002, ARCH-004, ARCH-003 done, committed)**: destructive-word centralization
+  (`utils/security.py`), knowledge-agent tunables, and business-analyst inventory-risk thresholds (3d/7d → policies.yaml
+  `inventory_risk:`) all configurable via policies.yaml. Suite 165 pass (+9), pyright 0, ruff clean.
+- **Slice C remaining**: ARCH-001 (supervisor business-logic leakage), ARCH-005 (advisory_council config),
+  ARCH-007 (policy_engine EXECUTE branch → policies), then LOW-priority ARCH-008/009/010.
 - Re-run `/exa-search` for live competitor citations once search credits are available.
 
 This file is a tracked mainline snapshot derived from repo artifacts. It is not a live lock, not a kanban board, and not an implementation gate.

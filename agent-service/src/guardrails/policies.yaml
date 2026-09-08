@@ -7,6 +7,15 @@ thresholds:
 
 # Agent runtime tunables (ARCH-004/005) — single place to tune agent behavior
 # without code changes. Defaults match the former hardcoded values.
+# Agent runtime tunables (ARCH-004/005) — single place to tune agent behavior
+# without code changes. Defaults match the former hardcoded values.
+# ARCH-003: inventory risk thresholds in days of stock coverage.
+#   stock_days < low_risk_days      => HIGH risk (restock recommended)
+#   low_risk_days <= stock_days < medium_risk_days => MEDIUM
+#   stock_days >= medium_risk_days  => LOW
+inventory_risk:
+  low_risk_days: 3
+  medium_risk_days: 7
 knowledge_agent:
   top_k: 3                 # policy-snippet retrieval depth
   snippet_limit: 3         # dedup/aggregation cap after broader round
