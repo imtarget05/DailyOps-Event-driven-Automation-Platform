@@ -18,6 +18,7 @@ from ..guardrails.policy_engine import PolicyDecision, _enforce_auth_claims, che
 from ..memory.store import memory_key, recall, remember
 from ..observability.metrics import observe
 from ..reasoning.llm_client import reason
+from ..utils.security import contains_destructive_term
 
 ANALYST_EVENTS = {"inventory_check", "business_event", "daily_report", "sales_review"}
 ALL_SPECIALISTS = ("business_analyst", "knowledge_agent", "operations_agent", "report_agent",
@@ -241,7 +242,7 @@ async def supervise(correlation_id: str, event_type: str, entity: str,
         action_type, recommended, ticket_type = "REPORT", "advisory_brief", "advisory"
         if payload.get("source") == "telegram":
             action_type = "NOTIFY"
-    if any(k in text for k in ("delete", "drop", "destroy", "shutdown")):
+    if contains_destructive_term(text):
         action_type = "EXECUTE"  # policy gate will DENY below
         recommended = "delete_system_data"
 

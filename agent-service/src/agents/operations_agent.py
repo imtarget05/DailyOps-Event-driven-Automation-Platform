@@ -4,10 +4,10 @@ from __future__ import annotations
 import asyncio
 import time
 
-from .base import AgentResult
+# ARCH-002: destructive detection centralized in utils/security.py.
 from ..tools import registry as tools
-
-DENY_KEYWORDS = ("delete", "drop", "truncate", "shutdown", "rm -rf", "destroy")
+from ..utils.security import contains_destructive_term
+from .base import AgentResult
 
 
 async def run(event_type: str, entity: str, payload: dict, correlation_id: str = "") -> AgentResult:
@@ -15,7 +15,7 @@ async def run(event_type: str, entity: str, payload: dict, correlation_id: str =
     await asyncio.sleep(0.02)
     text = str(payload.get("text", "")).lower()
     recommended = str(payload.get("recommended_action", "") or "")
-    if any(k in text for k in DENY_KEYWORDS) or any(k in recommended.lower() for k in DENY_KEYWORDS):
+    if contains_destructive_term(text) or contains_destructive_term(recommended):
         return AgentResult(
             agent="operations_agent", status="completed",
             summary="destructive operation proposed -> must be DENIED by policy",

@@ -3,6 +3,8 @@ import re
 
 from typing import Any, Dict, List, Optional
 
+from ..utils.security import contains_destructive_term
+
 
 
 def _validate_schema(result: Any) -> Optional[str]:
@@ -81,11 +83,9 @@ def _validate_action_fields(result: Any) -> Optional[str]:
     for rec in result.get("recommendations", []) or []:
         if not isinstance(rec, str):
             return "INVALID_PARAMETER"
-        lower = rec.lower()
-        dangerous = ["delete", "drop", "truncate", "shutdown", "destroy", "purge", "wipe", "rm -rf"]
-        for d in dangerous:
-            if re.search(r"" + re.escape(d) + r"", lower):
-                return "UNSUPPORTED_ACTION"
+        # ARCH-002: single authoritative destructive list (utils/security).
+        if contains_destructive_term(rec):
+            return "UNSUPPORTED_ACTION"
     return None
 
 

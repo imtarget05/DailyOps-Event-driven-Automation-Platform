@@ -12,6 +12,12 @@ from typing import Literal
 
 import yaml
 
+# ARCH-002 (TASK-001/002): destructive detection is centralized in
+# utils/security.py — the single authoritative word list lives there.
+# Importing `is_destructive` here re-exports it unchanged for existing
+# importers of policy_engine (verified: tests/test_hardening.py).
+from ..utils.security import is_destructive
+
 
 @dataclass
 class PolicyDecision:
@@ -172,9 +178,8 @@ def classify_risk(action_type: str) -> str:
     return _ACTION_RISK.get((action_type or "").upper(), "EXTERNAL_SIDE_EFFECT")
 
 
-# Destructive verbs matched as whole tokens (split on non-alphanumeric) so
-# "delete_system_data" is denied but "deadline"/"readme" are not false-positives.
-DENY_TOKENS = {"delete", "drop", "truncate", "shutdown", "destroy", "purge", "wipe", "rm", "rf"}
+# ARCH-002 (TASK-001/002): destructive detection is centralized in
+# utils/security.py — the single authoritative word list lives there.
 
 _DEFAULT_RESTOCK_AUTO_MAX = 500
 
@@ -200,13 +205,6 @@ def _load_thresholds(path: str | None = None) -> dict:
     except (FileNotFoundError, ValueError, TypeError):
         return {"restock_auto_max": _DEFAULT_RESTOCK_AUTO_MAX,
                 "finance_refund_auto_max": 200}
-
-
-def is_destructive(recommended_action: str) -> bool:
-    """Token-boundary destructive check (no substring false-positives).
-    Coerces non-string input (poisoned LLM output) instead of raising."""
-    tokens = {t for t in re.split(r"[^a-z0-9]+", str(recommended_action or "").lower()) if t}
-    return bool(tokens & DENY_TOKENS)
 
 
 def _parse_restock_qty(recommended_action: str) -> int | None:

@@ -22,7 +22,13 @@
   stray `Platform/` duplicate removed; dirty tree consolidated into logical commits
   (build fix / agent-service hardening / CI strict / n8n+db / docs+harness) behind a full gate
   (114 tests, pyright 0, workflows JSON, compose config, policies.yaml).
-- **Slice C (from `.kilo/plans/REFACTOR_PLAN.md`)**: ARCH-002 destructive-word centralization, then ARCH-001/003/004.
+- **Slice C progress (ARCH-002 TASK-001+002 done, committed)**: destructive-word detection centralized in
+  `agent-service/src/utils/security.py` (authoritative list + `is_destructive` token mode + `contains_destructive_term`
+  phrase mode); policy_engine / operations_agent / specialist_validator / supervisor all rewired; 34 new parity+edge
+  tests (`tests/test_security_utils.py`) → suite 148 pass, pyright 0; README/spec test counts synced;
+  `.kilo/plans/REFACTOR_PLAN.md` TASK-001/002 marked DONE (local plan file, gitignored).
+- **Slice C remaining**: ARCH-001/003/004 (supervisor business-logic leakage, hardcoded thresholds → policy engine,
+  knowledge-agent config), then LOW-priority ARCH-008/009/010.
 - Re-run `/exa-search` for live competitor citations once search credits are available.
 
 This file is a tracked mainline snapshot derived from repo artifacts. It is not a live lock, not a kanban board, and not an implementation gate.
