@@ -17,8 +17,11 @@
 
 ## Next
 
-- **Slice A (deferred)**: fix `pyproject.toml` broken `[build-system]` backend (`setuptools.backends._legacy:_Backend`
-  → `setuptools.build_meta`), decide `uv.lock` disposition (gitignore or commit), then review+commit the dirty tree.
+- **Slice A (done, uncommitted→committed)**: `pyproject.toml` build backend fixed to `setuptools.build_meta`
+  (uv build verified: sdist+wheel); `uv.lock` committed (31 pkgs, `uv lock --check` OK); `*.egg-info/` gitignored;
+  stray `Platform/` duplicate removed; dirty tree consolidated into logical commits
+  (build fix / agent-service hardening / CI strict / n8n+db / docs+harness) behind a full gate
+  (114 tests, pyright 0, workflows JSON, compose config, policies.yaml).
 - **Slice C (from `.kilo/plans/REFACTOR_PLAN.md`)**: ARCH-002 destructive-word centralization, then ARCH-001/003/004.
 - Re-run `/exa-search` for live competitor citations once search credits are available.
 
