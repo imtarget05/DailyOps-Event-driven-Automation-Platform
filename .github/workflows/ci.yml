@@ -28,6 +28,19 @@ jobs:
       - name: Validate workflow JSON + connection integrity
         run: node scripts/validate-workflows.js
 
+      - name: DAILYOPS-OPS-3 production-readiness gate (dev template must pass)
+        run: |
+          chmod +x scripts/check-prod-readiness.sh
+          # CI runs in dev mode: gate must pass-through. Production deploys run
+          # the same script with DEPLOY_ENV=production + real secrets.
+          DEPLOY_ENV=dev ./scripts/check-prod-readiness.sh
+          # Prove the gate itself fails-closed on empty prod secrets:
+          if DEPLOY_ENV=production ./scripts/check-prod-readiness.sh 2>/dev/null; then
+            echo "FAIL: production gate did not block empty secrets"; exit 1
+          else
+            echo "production gate correctly blocks empty secrets"
+          fi
+
       - name: Validate monitoring + guardrail configs
         run: |
           python -c "import yaml; yaml.safe_load(open('agent-service/src/guardrails/policies.yaml'))" 2>/dev/null \
@@ -37,5 +50,14 @@ jobs:
       - name: Install agent-service deps
         run: pip install -r agent-service/requirements.txt
 
-      - name: Test agent-service contract (/agent/decide)
-        run: python -m pytest agent-service/tests/ -q 2>/dev/null || python -m unittest discover -s agent-service/tests -p 'test_*.py'
+      - name: Test agent-service (/agent/decide contract + unit)
+        # Strict: pytest failures must fail CI. This used to fall back to
+        # `unittest discover`, silently masking a broken pytest suite.
+        run: python -m pytest agent-service/tests/ -q
+
+      - name: Type-check agent-service (pyright)
+        # Catches undefined names / missing imports / encoding slip-ups the
+        # runtime tests miss (e.g. a NameError only reachable on one branch).
+        run: |
+          pip install pyright
+          cd agent-service && python -m pyright src
